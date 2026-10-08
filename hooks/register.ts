@@ -56,7 +56,8 @@ const ctxOf = (u: ModelUsage) => u.input_tokens + u.cache_read_input_tokens + u.
 
 // `turns` holds the main-thread turns in flight: between a turn's model steps (a long tool run, a
 // permission wait) the engine refuses a compaction, so the mod pings instead and decides again next deadline.
-type Clock = Policy & { ttlMs: number; leadMs: number; autoAct: boolean; isLive: boolean; busy: number; acting: boolean; actedFor: number; turns: Set<string> }
+type Ttl = keyof typeof TTL_MS
+type Clock = Policy & { ttl: Ttl; ttlSource: string; ttlFixed: boolean; misses: number; resumedAt?: number; ttlMs: number; leadMs: number; leadMinutes: number; autoAct: boolean; isLive: boolean; busy: number; acting: boolean; actedFor: number; turns: Set<string> }
 
 async function record($: EngineInterface, entry: LedgerEntry) {
   const prev = ((await $.store.get(LEDGER)) as LedgerEntry[] | undefined) ?? []
@@ -156,6 +157,49 @@ async function paint($: EngineInterface, c: Clock) {
   }
 }
 
+const setTtl = (c: Clock, ttl: Ttl, source: string) => {
+  // a resumed session's lapse was marked as handled under the old TTL: move the mark with it
+  if (c.resumedAt !== undefined && c.actedFor === c.resumedAt + c.ttlMs) c.actedFor = c.resumedAt + TTL_MS[ttl]
+  c.ttl = ttl
+  c.ttlSource = source
+  c.ttlMs = TTL_MS[ttl]
+  c.leadMs = Math.min(c.leadMinutes * 60 * 1000, c.ttlMs / 2)
+}
+
+const isTtl = (v: unknown): v is Ttl => v === '5m' || v === '1h'
+const truthy = (v: unknown) => v !== undefined && v !== null && v !== '' && v !== '0' && v !== 'false' && v !== false
+
+// Claude Code's own choice for the main conversation (CLI 2.1.293): FORCE_PROMPT_CACHING_5M, then
+// CLAUDE_CODE_PROMPT_CACHE_TTL, then the promptCacheTtl setting, then ENABLE_PROMPT_CACHING_1H (and, on Bedrock,
+// ENABLE_PROMPT_CACHING_1H_BEDROCK). Unset, it is 1 hour on a subscription within its limits and 5 minutes on an
+// API key, Bedrock, Vertex or Foundry. Bedrock, Vertex and Foundry announce themselves in the environment; an API
+// key in use does not (one may be set and unused), so that case is left to the cache itself (watchTtl).
+export const ttlFromSettings = (s: Record<string, unknown>, env: Record<string, unknown>): [Ttl, string] | undefined => {
+  const senv = (s.env ?? {}) as Record<string, unknown>
+  const v = (name: string) => env[name] ?? senv[name]
+  if (truthy(v('FORCE_PROMPT_CACHING_5M'))) return ['5m', 'FORCE_PROMPT_CACHING_5M']
+  const fixed = v('CLAUDE_CODE_PROMPT_CACHE_TTL')
+  if (isTtl(fixed)) return [fixed, 'CLAUDE_CODE_PROMPT_CACHE_TTL']
+  if (isTtl(s.promptCacheTtl)) return [s.promptCacheTtl, 'promptCacheTtl setting']
+  const bedrock = truthy(v('CLAUDE_CODE_USE_BEDROCK'))
+  if (truthy(v('ENABLE_PROMPT_CACHING_1H')) || (bedrock && truthy(v('ENABLE_PROMPT_CACHING_1H_BEDROCK')))) return ['1h', 'ENABLE_PROMPT_CACHING_1H']
+  if (bedrock) return ['5m', 'Bedrock default']
+  if (truthy(v('CLAUDE_CODE_USE_VERTEX'))) return ['5m', 'Vertex default']
+  if (truthy(v('CLAUDE_CODE_USE_FOUNDRY'))) return ['5m', 'Foundry default']
+  return undefined
+}
+
+// The engine hands a mod only the four token counters, not the 5m/1h split, so the TTL is read off the cache's
+// behaviour: a return 5–55 minutes after the last refresh either finds the context (an hour) or does not (five
+// minutes). A miss can also come from a changed tool list, so it takes two misses in a row to conclude 5m; one
+// hit is enough for 1h. Returns the new verdict, or undefined when this request says nothing.
+export const watchTtl = (since: number, prevCtx: number, read: number, misses: number): { ttl?: Ttl; misses: number } => {
+  if (prevCtx < 20_000 || since < 5.5 * 60 * 1000 || since > 55 * 60 * 1000) return { misses }
+  if (read >= 0.8 * prevCtx) return { ttl: '1h', misses: 0 }
+  if (read < 0.5 * prevCtx) return misses + 1 >= 2 ? { ttl: '5m', misses: misses + 1 } : { misses: misses + 1 }
+  return { misses }
+}
+
 const modeOf = (c: Clock, chosen: Mode | null): Mode => chosen ?? (c.autoAct ? 'auto' : 'off')
 
 const MODE_TEXT: Record<Mode, string> = {
@@ -164,13 +208,13 @@ const MODE_TEXT: Record<Mode, string> = {
   off: 'off: no pings, no compactions; a warning before the cache lapses',
 }
 
-export const summarize = (entries: LedgerEntry[], p: Policy & { leadMinutes: number; ttl: string }, m: Mode = 'auto') => {
+export const summarize = (entries: LedgerEntry[], p: Policy & { leadMinutes: number; leadMs?: number; ttl: string; ttlSource?: string }, m: Mode = 'auto') => {
   const pings = entries.filter(e => e.kind === 'ping')
   const compacts = entries.filter(e => e.kind === 'compact' && e.ok)
   const lines = [
     `This session: ${MODE_TEXT[m]}. Change it with /cache-clock on | pings | off.`,
     '',
-    `Policy (TTL ${p.ttl}, acting ${p.leadMinutes} min before expiry):`,
+    `Policy (TTL ${p.ttl}${p.ttlSource ? ` — ${p.ttlSource}` : ''}, acting ${p.leadMs !== undefined ? p.leadMs / 60000 : p.leadMinutes} min before expiry):`,
     `  context < ${k(p.keepAliveBelow)}: up to ${p.maxKeepAlives} keep-alive pings, then let it lapse`,
     `  ${k(p.keepAliveBelow)}–${k(p.compactAbove)}: 1 keep-alive ping, then compact at the next deadline`,
     `  ≥ ${k(p.compactAbove)}: compact at the first deadline`,
@@ -198,11 +242,17 @@ export const summarize = (entries: LedgerEntry[], p: Policy & { leadMinutes: num
 }
 
 export const register: Register = (on, options) => {
-  const ttl = options.ttl === '5m' ? '5m' : '1h'
+  const fixedTtl = isTtl(options.ttl) ? options.ttl : undefined     // 'auto' (the default) detects it
+  const ttl: Ttl = fixedTtl ?? '1h'
   const ttlMs = TTL_MS[ttl]
   const leadMinutes = Number(options.leadMinutes ?? 3)
   const clock: Clock = {
+    ttl,
+    ttlSource: fixedTtl ? 'cache-clock ttl setting' : 'assumed (subscription default) until a return shows otherwise',
+    ttlFixed: fixedTtl !== undefined,
+    misses: 0,
     ttlMs,
+    leadMinutes,
     leadMs: Math.min(leadMinutes * 60 * 1000, ttlMs / 2),
     autoAct: options.autoAct !== false,
     keepAliveBelow: Number(options.keepAliveBelowTokens ?? 125000),
@@ -220,6 +270,26 @@ export const register: Register = (on, options) => {
     // A -p run or an SDK host has nobody to walk away: no clock, no pings, no compactions.
     if (!e.isInteractive) return r
     clock.isLive = true
+    if (!fixedTtl) {
+      try {
+        const env: Record<string, unknown> = {
+          FORCE_PROMPT_CACHING_5M: await $.env.get('FORCE_PROMPT_CACHING_5M'),
+          CLAUDE_CODE_PROMPT_CACHE_TTL: await $.env.get('CLAUDE_CODE_PROMPT_CACHE_TTL'),
+          ENABLE_PROMPT_CACHING_1H: await $.env.get('ENABLE_PROMPT_CACHING_1H'),
+          ENABLE_PROMPT_CACHING_1H_BEDROCK: await $.env.get('ENABLE_PROMPT_CACHING_1H_BEDROCK'),
+          CLAUDE_CODE_USE_BEDROCK: await $.env.get('CLAUDE_CODE_USE_BEDROCK'),
+          CLAUDE_CODE_USE_VERTEX: await $.env.get('CLAUDE_CODE_USE_VERTEX'),
+          CLAUDE_CODE_USE_FOUNDRY: await $.env.get('CLAUDE_CODE_USE_FOUNDRY'),
+        }
+        const found = ttlFromSettings((await $.settings.read()) as Record<string, unknown>, env)
+        if (found) {
+          setTtl(clock, ...found)
+          clock.ttlFixed = found[1] !== 'Bedrock default' && found[1] !== 'Vertex default' && found[1] !== 'Foundry default'
+        }
+      } catch (err) {
+        $.ui.log(`cache-clock: settings not readable, TTL ${clock.ttl} assumed: ${String(err)}`, { to: 'debug' })
+      }
+    }
     await $.command.register({ name: 'cache-clock', argumentHint: '[on|pings|off]', immediate: true,
       description: 'Show what cache-clock has done, or turn it on / pings-only / off for this session' })
     $.clock.every(1000, () => void paint($, clock))
@@ -237,7 +307,7 @@ export const register: Register = (on, options) => {
     }
     if (arg) return { text: `Unknown option "${arg}". Use /cache-clock on, /cache-clock pings or /cache-clock off.` }
     const entries = ((await $.store.get(LEDGER)) as LedgerEntry[] | undefined) ?? []
-    return { text: summarize(entries, { ...clock, leadMinutes, ttl }, modeOf(clock, await read($, mode))) }
+    return { text: summarize(entries, clock, modeOf(clock, await read($, mode))) }
   })
 
   // A resumed transcript says how long it has been since its last response.
@@ -247,6 +317,7 @@ export const register: Register = (on, options) => {
       const at = now - e.seconds_since_last_response * 1000
       await update($, last, () => ({ at, ctx: e.context_tokens ?? 0, read: 0, written: 0 }))
       clock.actedFor = at + clock.ttlMs // a lapse while the session was closed is not a missed action
+      clock.resumedAt = at
       await update($, warm, () => null)
     }
     return next(e)
@@ -268,6 +339,15 @@ export const register: Register = (on, options) => {
       if (r.usage) {
         const u = r.usage
         const at = await $.clock.now()
+        if (!clock.ttlFixed) {
+          const [prev, w] = await Promise.all([read($, last), read($, warm)])
+          if (prev) {
+            const seen = watchTtl(at - Math.max(prev.at, w?.at ?? 0), prev.ctx, u.cache_read_input_tokens, clock.misses)
+            clock.misses = seen.misses
+            if (seen.ttl) setTtl(clock, seen.ttl, seen.ttl === '1h' ? 'observed: a return within the hour found the cache'
+              : 'observed: two returns after 5 minutes missed the cache')
+          }
+        }
         await update($, last, () => ({ at, ctx: ctxOf(u), read: u.cache_read_input_tokens, written: u.cache_creation_input_tokens }))
         await update($, warm, () => null)
         await update($, compacted, () => null)

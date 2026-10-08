@@ -28,6 +28,7 @@ HERE = Path(__file__).resolve().parent
 DEFAULT_PRICING = HERE.parent / "references" / "pricing.json"
 sys.path.insert(0, str(HERE))
 from cps_common import SPEND_FIELDS, spend_add, spend_rows  # noqa: E402
+import ttl as ttl_mod  # noqa: E402
 INF = float("inf")
 CC = "claude-code"
 TOOL_NAMES = {"claude-code": "Claude Code", "codex": "Codex", "gemini-cli": "Gemini CLI", "antigravity": "Antigravity",
@@ -936,6 +937,32 @@ def cache_economics(events: List[dict]) -> List[Dict[str, Any]]:
 
 # ----------------------------------------------------------------------------- recommendation
 
+def mod_by_ttl(events: List[dict], data_end: float, lead: float, current: Dict[str, Any],
+               pricing: Dict[str, float]) -> Dict[str, Dict[str, Any]]:
+    """For the TTL comparison: the mod's saving per session (vs doing nothing) under each TTL, for the current rule
+    and the rule that is best under that TTL, every interactive session counted whatever TTL it ran at."""
+    out: Dict[str, Dict[str, Any]] = {}
+    for t in ("5m", "1h"):
+        c = build_cc(events, t, data_end, lead, current)
+        sp, st = c["space"], c["stretches"]
+        m = model_params(c, pricing)
+        res = search(st, sp, m)
+        inv = {v: kk for kk, v in c["sess_index"].items()}
+        out[t] = {}
+        n_cur = sp.rules[sp.current][2]
+        for which, idx in (("current", sp.current), ("best", res["best"]), ("pings", None)):
+            per: Dict[str, float] = collections.defaultdict(float)
+            rule = sp.rules[idx] if idx is not None else None
+            for i, s_ in enumerate(st):
+                row = res["rows"][i]
+                atom = rule_atom(rule, s_["C"]) if rule else (n_cur, 0, 0)   # /cache-clock pings: never compacts
+                per[inv[s_["s"]]] += row[sp.ai[atom]] - row[sp.nothing]
+            out[t][which] = {"rule": rule_name(rule, sp.lead) if rule else
+                             f"≤{n_cur} ping{'s' if n_cur != 1 else ''} at any size, never compact · act {sp.lead:g} min early",
+                             "per_session": dict(per), "n": len(st)}
+    return out
+
+
 def day_of(t: float) -> str:
     from datetime import datetime, timezone
     return datetime.fromtimestamp(t, tz=timezone.utc).strftime("%Y-%m-%d")
@@ -1241,6 +1268,15 @@ def analyze(run: Path, pricing_path: Path = DEFAULT_PRICING, ttl_opt: str = "aut
     if spend and not spend_complete:
         warnings.append("no spend.json (collect.py writes it): the share of spend covers only the main thread")
 
+    # ---- which TTL: 5 minutes or 1 hour, per kind of traffic, the mod layered on the interactive lane
+    ttl_rows = ttl_mod.load(run)
+    if ttl_rows:
+        ttl_choice = ttl_mod.compare(ttl_rows, pricing, m["W"], mod_by_ttl(events, data_end, lead, current, pricing),
+                                     n_res, rnd)
+    else:
+        ttl_choice = {"available": False}
+        warnings.append("no ttl.jsonl (collect.py writes it): the 5-minute vs 1-hour comparison was skipped")
+
     # ---- coverage
     tools_cov = []
     for t in coverage.get("tools", []):
@@ -1274,7 +1310,7 @@ def analyze(run: Path, pricing_path: Path = DEFAULT_PRICING, ttl_opt: str = "aut
             "current_rule": rule_name(sp.rules[sp.current], sp.lead), "current_saving": saving(tot[sp.current], base),
         },
         "model": dict(m),
-        "spend": spend, "sleep": sleep_out, "presence": presence, "global": glob, "cache_economics": cache_economics(events),
+        "spend": spend, "ttl_choice": ttl_choice, "sleep": sleep_out, "presence": presence, "global": glob, "cache_economics": cache_economics(events),
         "coverage": {"generated": coverage.get("generated"), "system": coverage.get("system"), "tools": tools_cov,
                      "power": coverage.get("power")},
         "recommendation": {"claude_code": rec_cc, **({"global": rec_g} if rec_g else {})},
@@ -1366,7 +1402,8 @@ def summary_lines(r: Dict[str, Any]) -> List[str]:
             lines.append("Your current rule is also the best simple rule")
     else:
         lines = ["No rule beats doing nothing: switch cache-clock to warn-only", ""]
-    lines.append("TTL " + r["ttl"]["used"] + " misses: " + miss_line(r["validation"]))
+    tc = r.get("ttl_choice") or {}
+    lines.append(ttl_mod.short(tc) if tc.get("available") else "TTL " + r["ttl"]["used"] + " misses: " + miss_line(r["validation"]))
     g = r["recommendation"].get("global")
     if g:
         same = "same verdict" if r["global"].get("same_recommendation") else \

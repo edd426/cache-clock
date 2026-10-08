@@ -42,6 +42,11 @@ did not split by TTL). `events.jsonl` then drops subagent events (they feed no b
 `--include-headless`, scripted-run events. The Claude Code adapter reads `<session>/subagents/*.jsonl` for
 responses only, for this ledger.
 
+**ttl.jsonl** (written by collect.py): every Claude Code `response` and `compaction` in all three classes, for
+the TTL comparison — `lane` (the session id; a subagent's is `session/agent`), `session`, `class` (`main`,
+`headless`, `subagent` — here a scripted run's subagent is `subagent`, since subagents have their own TTL
+setting), `t`, `kind`, `model`, `usage`. Subagent responses carry `lane` from the adapter.
+
 Coverage: each adapter also fills a `Coverage` record (see `cps_common.Coverage`): roots it checked (as
 placeholders like `{HOME}/.codex/sessions`), files read, files skipped with a reason, parse errors, and notes.
 `collect.py` adds sessions, events, first/last date and a per-month session histogram per tool — the month

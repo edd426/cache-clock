@@ -100,6 +100,8 @@ class ClaudeCodeAdapter(unittest.TestCase):
             by = {r["class"]: r for r in rows}
             self.assertEqual(by["main"]["cache_read"], 1000)
             self.assertEqual((by["subagent"]["responses"], by["subagent"]["cache_read"], by["subagent"]["cache_write_1h"]), (1, 40, 10))
+            ttl_rows = [json.loads(x) for x in (out / "ttl.jsonl").read_text().splitlines()]
+            self.assertEqual([(r["class"], r["lane"]) for r in ttl_rows], [("main", "s1"), ("subagent", "s1/agent-a1")])
 
     def test_headless(self):
         evs = self.collect([user("2026-10-01T10:00:00Z", "q"), assistant("2026-10-01T10:00:05Z", "m1")], "sdk-cli")

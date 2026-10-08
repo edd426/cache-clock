@@ -75,7 +75,39 @@ tool. No prompt text, paths or project names reach the analysis.
    collect.py read, before it dropped subagent and scripted-run events from `events.jsonl`); without it only
    the main thread is counted. Other vendors' tokens are weighted with the same price ratios unless
    `pricing.json` → `per_tool` overrides them; stores without token counts are named and left out.
-10. **Confidence.** high: n ≥ 200, interval ≤ 12 points, holdout gap ≤ 3 points, near-optimal in ≥ 70% of
+10. **Which TTL** (`ttl.py`, from `ttl.jsonl`). Claude Code sets the TTL separately for the main conversation
+   (`promptCacheTtl`, interactive and `-p` alike; `CLAUDE_CODE_PROMPT_CACHE_TTL` wins, so a scripted run can set
+   its own) and for subagents, workflows and helpers (`subagentPromptCacheTtl`); `FORCE_PROMPT_CACHING_5M=1`
+   overrides both, `ENABLE_PROMPT_CACHING_1H=1` turns both to 1 hour, `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL`
+   overrides the subagent setting and an agent's own definition can name one (read from strings in the CLI
+   2.1.293 binary). Helper and side requests follow the subagent setting but leave no transcript, so the
+   subagent lane does not count them. Unset,
+   the main conversation is 1 hour on a subscription within its limits and 5 minutes on an API key, Bedrock,
+   Vertex or Foundry; subagents are 5 minutes. So the comparison runs per lane class — interactive
+   conversations, scripted runs, subagents — over every request with token counts, one lane per conversation or
+   subagent, walked in order. A lane restarts at its first request, after a compaction and on a model switch.
+   For each request, both TTLs:
+   - under 5 minutes since the lane's previous request: the observed read, the rest written;
+   - 5–60 minutes: the 1-hour TTL reads the observed read if the history ran at 1 hour, else f × min(previous,
+     current cacheable context) — f, the prefix survival, is measured on the person's own 1-hour returns
+     (token-weighted, ≥ 30 returns) else 0.8, with 0.5/0.8/1.0 shown as scenarios. The 5-minute TTL reads the
+     observed read if the history ran at 5 minutes, else only the shared prefix, and only if another lane of the
+     same class and model sent a request within 5 minutes;
+   - a lane's first request, or over 60 minutes: the shared prefix (a first request's own observed read; capped
+     at the class's median first-request read otherwise, since a warm read past an hour may be cache-clock's
+     keep-alive) when another lane ran within that TTL, else nothing. A request observed at 5 minutes keeps its
+     read under both TTLs — a lower bound for the hour.
+   Writes are the cacheable context minus the read, at 1.25× or 2×. On the interactive lane the mod is layered
+   on: analyze.py's own stretch model is rerun with every interactive session at each TTL (lead capped at half
+   the TTL, so 2.5 min at 5 minutes) and its saving per session added for three variants — your rule, the best
+   rule for that TTL, and pings only (`/cache-clock pings`). The verdict compares the best rule at each TTL
+   (no mod on the other lanes) with a session-clustered bootstrap (90%); a switch needs the interval clear of
+   zero and ≥ 1% of that lane's spend, and — where f enters at all — the same sign and size under f = 0.5, 0.8
+   and 1.0, else "either, depends on f". Checks shown: the **model check** — the formulas applied blind at the
+   observed TTL (observed reads ignored outside the under-5-minute band) against the observed cost; it can fail,
+   and a gap of more than a few % means the verdict's other-TTL side is not trustworthy — and the reuse ratio — extra cache reads the hour buys ÷ the tokens it writes at 2× — against the 65.2% break-even
+   ((2 − 1.25) ÷ (1.25 − 0.1)).
+11. **Confidence.** high: n ≥ 200, interval ≤ 12 points, holdout gap ≤ 3 points, near-optimal in ≥ 70% of
    resamples. low: n < 50, interval > 25 points, or holdout gap > 10. Otherwise medium; the global view is
    capped at medium.
 
@@ -95,6 +127,10 @@ tool. No prompt text, paths or project names reach the analysis.
 | manual /compact return | priced as your own compaction | priced as an ordinary request |
 | other tools' price ratios | Claude's (read 0.1×, output 5×) unless `per_tool` in pricing.json | — (stated next to the share) |
 | independence (global view) | return time does not depend on context size | compare with the Claude Code view |
+| prefix survival f (TTL step) | measured on your 1-hour returns, else 0.8; only requests observed at 5 min use it | f = 0.5 / 0.8 / 1.0 |
+| shared prefix across lanes (TTL step) | a new lane reads another's cached system prompt and tools only if one of its class and model ran within the TTL | — (asymmetric: a 5-min-observed read is kept under 1 h, a lower bound) |
+| price ratios (TTL step) | API list prices; whether a subscription's usage meter weighs 1-hour writes at 2× is not established | — (stated in the report) |
+| compaction requests (TTL step) | not in the pair model's totals; the mod layer's compaction savings are priced against them, almost equally at both TTLs | — |
 | **not priced** | follow-up requests after a compaction re-read ~60k instead of C (favours compaction, so the study is conservative toward pings); compaction loses conversation detail (favours pings) | — |
 
 ## Verified live (2026-10-07, Claude Code 2.1.292, Haiku 4.5, 5-minute TTL forced with `FORCE_PROMPT_CACHING_5M=1`)

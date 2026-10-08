@@ -1,6 +1,6 @@
 ---
 name: cache-policy-study
-description: Studies how the user actually works with AI coding tools on this machine (when they walk away, how long they stay away, how big the conversation is when they leave) and derives the cheapest prompt-cache policy for Claude Code - when to send keep-alive pings, when to compact, and when to let the cache lapse - with thresholds ready to paste into the cache-clock mod. Reads local history from Claude Code, Codex, Gemini CLI, Antigravity, VS Code Copilot Chat, Cursor and Copilot CLI, plus the OS sleep log, and reports two answers - Claude Code behaviour alone, and global behaviour across all tools - with bootstrap intervals, a temporal holdout and sensitivity checks. Use when the user asks how to avoid cache misses or cache re-writes after stepping away, what keep-alive or auto-compact thresholds to use, whether keep-alive pings are worth it, how often they return within an hour or two, how big their context is when they walk away, or wants this study run on another machine (including a Windows work laptop).
+description: Studies how the user actually works with AI coding tools on this machine (when they walk away, how long they stay away, how big the conversation is when they leave) and derives the cheapest prompt-cache policy for Claude Code - when to send keep-alive pings, when to compact, and when to let the cache lapse - with thresholds ready to paste into the cache-clock mod. Reads local history from Claude Code, Codex, Gemini CLI, Antigravity, VS Code Copilot Chat, Cursor and Copilot CLI, plus the OS sleep log, and reports two answers - Claude Code behaviour alone, and global behaviour across all tools - with bootstrap intervals, a temporal holdout and sensitivity checks. Use when the user asks how to avoid cache misses or cache re-writes after stepping away, what keep-alive or auto-compact thresholds to use, whether keep-alive pings are worth it, whether to use the 5-minute or 1-hour prompt-cache TTL (for conversations, scripted runs and subagents separately), how often they return within an hour or two, how big their context is when they walk away, or wants this study run on another machine (including a Windows work laptop).
 ---
 
 # Cache policy study
@@ -17,8 +17,8 @@ python3 "$SKILL/scripts/study.py" --out "./cache-policy-study-$(date +%F)"
 
 Windows (PowerShell): `python "$env:SKILL\scripts\study.py" --out ".\cache-policy-study-$(Get-Date -Format yyyy-MM-dd)"`.
 
-It runs three steps, each runnable alone: `collect.py` (history stores → `events.jsonl`, `spend.json`,
-`coverage.json`, `sleep.json`), `analyze.py --run DIR` (→ `results.json`), `report.py --run DIR` (→ `report.html`,
+It runs three steps, each runnable alone: `collect.py` (history stores → `events.jsonl`, `ttl.jsonl`,
+`spend.json`, `coverage.json`, `sleep.json`), `analyze.py --run DIR` (→ `results.json`), `report.py --run DIR` (→ `report.html`,
 `summary.md`, `photo.html`). Python 3.9+, standard library only. Useful `collect.py` flags: `--only
 claude-code,codex`, `--since 2026-06-01`, `--include-headless` (keep scripted runs; they are excluded from
 behaviour by default but always counted).
@@ -50,6 +50,15 @@ as an equivalent alternative, not a recommendation. Settings are exact cache-clo
   and shows the factor between each step (share = headline × gap cost ÷ that total). Quote the headline and
   the widest share together, e.g. "69% of idle-gap cost = 2.4% of all AI-tool spend". Tools whose stores keep
   no token counts are listed as left out, which makes the widest share an upper bound.
+- **Which TTL** — 5 minutes or 1 hour, separately for interactive conversations (`promptCacheTtl`), scripted
+  runs (`CLAUDE_CODE_PROMPT_CACHE_TTL` per run) and subagents (`subagentPromptCacheTtl`), each modelled request
+  by request; cache-clock is layered on the interactive lane (your rule, the best rule for that TTL, and pings
+  only). Quote the sign as "1h vs 5m": +8% means the hour costs 8% more. Check the model check (the formulas run
+  blind at the observed TTL vs the observed cost) is within a few percent before trusting a verdict; costs use
+  API list-price ratios, which a subscription's meter may not. At 5 minutes most of the mod's saving comes from compacting after
+  ~2.5 idle minutes — say so, since that loses detail the study does not price; on a plan that allows it, the
+  hour may be the better fix — check the table. Changing the TTL of runs that are themselves experiments changes their cost
+  measurements — flag that rather than recommend it blindly.
 - **Fallback: global (x% Claude Code, y% other tools)** — return times pooled across every AI tool, applied
   to Claude Code's context sizes. Use it only when Claude Code history is thin; it is mostly the same data,
   not independent evidence, so never present the two headlines as two confirmations. The presence section
@@ -70,7 +79,7 @@ that machine.
 ## Files
 
 - `scripts/collect.py`, `scripts/adapters/*.py` (one per tool), `scripts/power.py` (sleep/wake log)
-- `scripts/analyze.py`, `scripts/report.py`, `scripts/study.py`
+- `scripts/analyze.py`, `scripts/ttl.py` (the TTL comparison), `scripts/report.py`, `scripts/study.py`
 - `references/event-schema.md` (the adapter contract), `references/method.md` (method and assumptions),
   `references/pricing.json` (cost multipliers — edit for other prices)
 - `tests/` — `python3 -m unittest discover -s tests`

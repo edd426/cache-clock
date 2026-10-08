@@ -22,8 +22,13 @@ plugins (tested on 2.1.292). It runs only in interactive sessions: `claude -p` a
 
 ## What it does at the deadline
 
-Every main-conversation request refreshes the cache for its TTL (1 hour on a subscription, 5 minutes on the API
-default). Three minutes before it expires, with nobody typing, the mod looks at the context size:
+Every main-conversation request refreshes the cache for its TTL (1 hour on a subscription, 5 minutes on an API
+key, Bedrock, Vertex or Foundry, unless `promptCacheTtl` says otherwise). The mod works out which one applies
+by itself: Claude Code's own settings and environment first (`promptCacheTtl`, the TTL variables, Bedrock,
+Vertex or Foundry), then how the cache behaves — two returns within the hour that miss mean 5 minutes, one that
+hits means an hour. `/cache-clock` says which it found. An API key in use is not visible to a mod, so on one
+the clock assumes an hour until two returns have missed; set `ttl` to `5m` to skip that. Three minutes before it expires (2.5 minutes on a 5-minute TTL), with nobody typing, the mod
+looks at the context size:
 
 | Context | Action |
 |---|---|
@@ -51,14 +56,14 @@ tokens, switch the mod for that session (it lasts until the session ends and sur
 The status line ends in `· off` or `· pings only` while a session is switched. To turn it off everywhere, set
 `autoAct` to false in the settings.
 
-Settings (`/plugin` → cache-clock → configure): `ttl`, `autoAct` (off = countdown and a warning only),
+Settings (`/plugin` → cache-clock → configure): `ttl` (`auto` by default; `1h` or `5m` to pin it), `autoAct` (off = countdown and a warning only),
 `leadMinutes`, `keepAliveBelowTokens`, `maxKeepAlives`, `compactAboveTokens`.
 
 ## Fit the thresholds to yourself: the cache-policy-study skill
 
 The plugin ships a skill, `cache-policy-study`, that replays your own history — when you walk away, how long
 you stay away, how big the context is when you leave — against every rule of the shape above and tells you
-whether to keep the defaults or change them, with session-clustered bootstrap intervals, a temporal holdout and
+whether to keep the defaults or change them, and which cache TTL to use, with session-clustered bootstrap intervals, a temporal holdout and
 sensitivity rows. It reads Claude Code, Codex, Gemini CLI, Antigravity, VS Code Copilot Chat, Cursor and
 Copilot CLI history plus the OS sleep log (macOS verified; Windows and Linux readers untested), never calls a
 model, and keeps prompt text, paths and project names out of its reports. Every saving it reports comes with its share of
@@ -71,6 +76,30 @@ python3 skills/cache-policy-study/scripts/study.py --out ./cache-policy-study
 
 Only the Claude Code and Codex readers have been checked against real stores; the others are built from
 format documentation and flagged as unverified in the report.
+
+## 1 hour or 5 minutes?
+
+A 1-hour cache write costs 2× the input price instead of 1.25×. It pays for itself when requests come back
+5–60 minutes apart often enough. Claude Code lets you choose separately for conversations (`promptCacheTtl`
+in `~/.claude/settings.json`, or `CLAUDE_CODE_PROMPT_CACHE_TTL` for one run) and for subagents
+(`subagentPromptCacheTtl`). The study answers each one separately from your history, request by request, with
+cache-clock layered on the interactive conversations. On the author's history:
+
+| Traffic | Now | 1h vs 5m | Verdict |
+|---|---|---:|---|
+| interactive conversations (with cache-clock on both) | 1h | **−13%** (90% −15% to −10%) | keep 1 hour |
+| interactive conversations, no mod | 1h | −32% (90% −35% to −27%) | keep 1 hour |
+| scripted runs (`claude -p`, SDK) | 1h | **+7.9%** (90% +6.7% to +9.1%) | 5 minutes: requests come seconds apart, so the hour buys nothing |
+| subagents | 5m | −2.7% (90% −9.2% to +5.6%) | either; the sign flips with how much context survives |
+
+Costs use API list-price ratios (1-hour write 2×); whether a subscription's usage meter weighs them the same way
+is not established. A model check runs the formulas blind at the TTL the history actually used: here they land
+within 0.3–2.0% of the observed cost.
+
+On a 5-minute TTL the mod still saves a lot (27% of interactive cost on this history), but most of that comes
+from compacting a large conversation after about 2.5 quiet minutes. If your plan lets you set
+`"promptCacheTtl": "1h"`, that was the cheaper fix on this history. If it doesn't, `/cache-clock pings` keeps the
+conversation whole at a smaller saving (7.2% here).
 
 ## How much it saves — and out of what
 

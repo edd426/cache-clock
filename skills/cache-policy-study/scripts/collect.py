@@ -3,9 +3,11 @@
 
     python3 collect.py --out ./cps-YYYY-MM-DD [--only claude-code,codex] [--since 2026-06-01] [--include-headless]
 
-Writes events.jsonl, spend.json, coverage.json and (when power.py finds a sleep log) sleep.json into --out.
+Writes events.jsonl, ttl.jsonl, spend.json, coverage.json and (when power.py finds a sleep log) sleep.json into --out.
 events.jsonl holds the behaviour stream (main-thread events; scripted runs only with --include-headless);
-spend.json holds the tokens of every response, subagents and scripted runs included, per tool, class and day.
+spend.json holds the tokens of every response, subagents and scripted runs included, per tool, class and day;
+ttl.jsonl holds every Claude Code request (and compaction) in all three classes, one lane per conversation or
+subagent, for the 5-minute vs 1-hour TTL comparison.
 """
 from __future__ import annotations
 
@@ -20,7 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from cps_common import Coverage, Env, eprint, parse_time, spend_add, spend_rows, write_jsonl  # noqa: E402
+from cps_common import Coverage, Env, eprint, parse_time, spend_add, spend_class, spend_rows, write_jsonl  # noqa: E402
 import adapters  # noqa: E402
 
 
@@ -70,7 +72,7 @@ def main(argv=None) -> int:
     since, until = parse_time(a.since), parse_time(a.until)
     only = set(a.only.split(",")) if a.only else None
 
-    all_events, coverage, ledger = [], [], {}
+    all_events, coverage, ledger, ttl_rows = [], [], {}, []
     for name in adapters.MODULES:
         try:
             mod = adapters.load(name)
@@ -91,6 +93,9 @@ def main(argv=None) -> int:
             status = "absent"
         for e in evs:
             spend_add(ledger, e)
+            if e["tool"] == "claude-code" and e["kind"] in ("response", "compaction"):
+                ttl_rows.append({"lane": e.get("lane") or e["session"], "session": e["session"], "class": "subagent" if e["subagent"] else spend_class(e),
+                                 "t": e["t"], "kind": e["kind"], "model": e["model"], "usage": e["usage"]})
         # Subagent threads feed no behaviour (they have their own cache prefixes): spend only.
         kept = [e for e in evs if not e.get("subagent") and (a.include_headless or e["interactive"] is not False)]
         row = summarize(evs, cov, status, err)
@@ -102,6 +107,8 @@ def main(argv=None) -> int:
 
     all_events.sort(key=lambda e: e["t"])
     write_jsonl(out / "events.jsonl", all_events)
+    ttl_rows.sort(key=lambda e: e["t"])
+    write_jsonl(out / "ttl.jsonl", ttl_rows)
     (out / "spend.json").write_text(json.dumps({
         "_note": "tokens per tool x class (main = interactive main thread, subagent, headless = scripted runs and their subagents) x UTC day; responses without token counts are counted in responses only",
         "rows": spend_rows(ledger)}, indent=0))

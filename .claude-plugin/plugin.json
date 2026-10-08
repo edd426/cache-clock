@@ -1,6 +1,6 @@
 {
   "name": "cache-clock",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Status-line countdown to prompt-cache expiry; keeps small contexts warm and compacts large ones before the cache lapses",
   "author": {
     "name": "Evan DeLord"
@@ -18,9 +18,10 @@
     "ttl": {
       "type": "string",
       "title": "Prompt-cache TTL",
-      "description": "The cache lifetime to count down from (1h on a subscription by default; 5m in overage or on the API default)",
-      "default": "1h",
+      "description": "The cache lifetime to count down from. auto: Claude Code's own settings and environment (promptCacheTtl, the TTL variables, Bedrock/Vertex/Foundry), then the cache's behaviour (two misses within the hour = 5m); 1h until either is known. Set 5m on an API key to skip the two misses",
+      "default": "auto",
       "options": [
+        "auto",
         "1h",
         "5m"
       ]

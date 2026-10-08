@@ -7,7 +7,8 @@ import { decide, summarize } from '../hooks/register'
 const MIN = 60 * 1000
 const policy = { keepAliveBelow: 125_000, maxKeepAlives: 3, compactAbove: 300_000 }
 
-function harness(on: On, ctx: number, opts: { forkRead?: number } = {}) {
+function harness(on: On, ctx: number, opts: { forkRead?: number; settings?: Record<string, unknown>; env?: Record<string, string> } = {}) {
+  const cache = { read: ctx - 1010 }       // what the next main-thread request reads from the cache
   const clock = mock.clock(on, { now: 1_000_000 })
   mock.store(on)
   const statuses: (string | undefined)[] = []
@@ -19,6 +20,8 @@ function harness(on: On, ctx: number, opts: { forkRead?: number } = {}) {
   on('command.register', ($, e) => ({ value: { command: e.name } }))
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: ctx, window: 1_000_000 }, rateLimits: [], version: 'test' } as SessionUsage }))
   on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('settings.read', () => ({ value: opts.settings ?? {} }))
+  on('env.get', ($, e) => ({ value: opts.env?.[e.name] }))
   on('turn.complete', () => ({ text: '' }))
   on('model.fork', () => {
     actions.push('ping')
@@ -30,9 +33,9 @@ function harness(on: On, ctx: number, opts: { forkRead?: number } = {}) {
   })
   on('turn.step', async function* ($, e): AsyncGenerator<never, TurnStepResult> {
     return { turnId: e.turnId, index: e.index, answer: 'ok', toolUses: [], stopReason: 'end_turn',
-      usage: { input_tokens: 10, output_tokens: 0, cache_read_input_tokens: ctx - 10, cache_creation_input_tokens: 0, model: 'claude-opus-5-5' } }
+      usage: { input_tokens: 10, output_tokens: 0, cache_read_input_tokens: cache.read, cache_creation_input_tokens: ctx - 10 - cache.read, model: 'claude-opus-5-5' } }
   })
-  return { clock, statuses, toasts, actions }
+  return { clock, statuses, toasts, actions, cache }
 }
 
 async function step($: Engine, agentId?: string, turnId = 't1') {
@@ -223,4 +226,79 @@ test('a subagent step does not mark the main thread as mid-turn', async ($, on) 
   await step($, 'agent-1', 'sub-turn')
   await h.clock.advance(58 * MIN)
   expect(h.actions).toEqual(['compact'])
+})
+
+test('ttl auto: Claude Code\'s promptCacheTtl setting sets the clock', async ($, on) => {
+  const h = harness(on, 80_000, { settings: { promptCacheTtl: '5m' } })
+  await start($)
+  await turn($)
+  await h.clock.advance(1000)
+  expect(h.statuses.at(-1)).toBe('cache ◷ 4m59s left')
+  const { text } = await runCommand($)
+  expect(text).toContain('TTL 5m — promptCacheTtl setting, acting 2.5 min before expiry')
+})
+
+test('ttl auto: an exported FORCE_PROMPT_CACHING_5M wins over the setting', async ($, on) => {
+  const h = harness(on, 80_000, { settings: { promptCacheTtl: '1h' }, env: { FORCE_PROMPT_CACHING_5M: '1' } })
+  await start($)
+  await turn($)
+  await h.clock.advance(1000)
+  expect(h.statuses.at(-1)).toBe('cache ◷ 4m59s left')
+  await h.clock.advance(2 * MIN)
+  expect(h.actions).toEqual([])
+  await h.clock.advance(30 * 1000)
+  expect(h.actions).toEqual(['ping'])         // acts 2.5 min before a 5-minute expiry
+})
+
+test('ttl auto: Bedrock without the 1-hour switch is 5 minutes', async ($, on) => {
+  const h = harness(on, 80_000, { env: { CLAUDE_CODE_USE_BEDROCK: '1' } })
+  await start($)
+  await turn($)
+  await h.clock.advance(1000)
+  expect(h.statuses.at(-1)).toBe('cache ◷ 4m59s left')
+})
+
+test('ttl auto: two returns that miss inside the hour switch the clock to 5 minutes', { timeoutMs: 20_000 }, async ($, on) => {
+  const h = harness(on, 80_000)
+  await start($)
+  await turn($)
+  h.cache.read = 14_000                       // the API key's 5-minute entry has lapsed: only the shared prefix
+  await h.clock.advance(20 * MIN)
+  await turn($)
+  await h.clock.advance(1000)
+  expect(h.statuses.at(-1)).toBe('cache ◷ 59m59s left')   // one miss could be a changed tool list
+  await h.clock.advance(20 * MIN)
+  await turn($)
+  await h.clock.advance(1000)
+  expect(h.statuses.at(-1)).toBe('cache ◷ 4m59s left')
+  const { text } = await runCommand($)
+  expect(text).toContain('TTL 5m — observed: two returns after 5 minutes missed the cache')
+})
+
+test('ttl auto: a return within the hour that finds the cache keeps 1 hour', { timeoutMs: 20_000 }, async ($, on) => {
+  const h = harness(on, 80_000)
+  await start($)
+  await turn($)
+  await h.clock.advance(20 * MIN)
+  await turn($)
+  const { text } = await runCommand($)
+  expect(text).toContain('TTL 1h — observed: a return within the hour found the cache')
+})
+
+test('ttl auto: nothing known means an hour, as before', async ($, on) => {
+  const h = harness(on, 80_000)
+  await start($)
+  await turn($)
+  await h.clock.advance(1000)
+  expect(h.statuses.at(-1)).toBe('cache ◷ 59m59s left')
+})
+
+test('a fixed ttl option ignores settings and the cache\'s behaviour', { options: { ttl: '1h' } }, async ($, on) => {
+  const h = harness(on, 80_000, { settings: { promptCacheTtl: '5m' } })
+  await start($)
+  await turn($)
+  h.cache.read = 14_000
+  for (let i = 0; i < 2; i++) { await h.clock.advance(20 * MIN); await turn($) }
+  await h.clock.advance(1000)
+  expect(h.statuses.at(-1)).toBe('cache ◷ 59m59s left')
 })

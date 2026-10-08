@@ -53,6 +53,53 @@ def spend_lead(sp: Dict[str, Any]) -> str:
             "smaller shares below. Each share is the row above × the ratio of the two totals (last column), i.e. "
             f"{share(sp['saving_on_gap'])} × gap cost ÷ that total.")
 
+TTL_ORDER = ("main", "headless", "subagent")
+MOD_LABEL = {"none": "no mod", "current": "cache-clock, your rule", "best": "cache-clock, best rule for this TTL",
+             "pings": "cache-clock, /cache-clock pings (never compacts)"}
+
+
+def signed(x: Optional[float]) -> str:
+    return "n/a" if x is None else ("+" if x >= 0 else "−") + share(abs(x))
+
+
+def ttl_how(c: str, lane: Dict[str, Any]) -> str:
+    v = lane["verdict"]
+    if v == "either":
+        return "No change needed: the two TTLs cost about the same here."
+    t = v.split()[-1]
+    if v.startswith("keep"):
+        return f"Keep {t} (set {lane['setting']} to \"{t}\" to pin it)."
+    if c == "headless":
+        return f"Run scripts with CLAUDE_CODE_PROMPT_CACHE_TTL={t} (promptCacheTtl would change interactive sessions too)."
+    return f"Set {lane['setting']}: \"{t}\" in ~/.claude/settings.json" + (
+        "; and set cache-clock's ttl to match (or leave it on auto)." if c == "main" else ".")
+
+
+def ttl_option_rows(lane: Dict[str, Any]) -> List[Tuple[Any, ...]]:
+    return [(f"{o['ttl']} · {MOD_LABEL[o['mod']]}", kt(o["total"]), signed(o["vs_now"]), o["rule"] or "")
+            for o in lane["options"]]
+
+
+def ttl_facts(lane: Dict[str, Any], tc: Dict[str, Any]) -> str:
+    d = lane["delta_1h_vs_5m"]
+    g = lane["gaps"]
+    n = lane["requests"] or 1
+    sc = (" · ".join(f"f={x['f']:g}: {signed(x['delta'])}" for x in lane["scenarios"]) if lane["scenarios"]
+          else "none needed (no 5–60 minute return ran at 5 minutes)")
+    return (f"{lane['requests']} requests in {lane['lanes']} lanes ({lane['sessions']} sessions), history at "
+            f"{lane['observed_ttl'] or 'unknown'} · returns 5–60 min after the previous request: "
+            f"{share(g.get('5-60 min', 0) / n)} · 1-hour reuse ratio {share(lane['reuse_ratio'])} (pays above "
+            f"{share(tc['break_even'])}) · 1h vs 5m {signed(d['point'])} (90% {signed(d['lo'])} to {signed(d['hi'])}), "
+            f"{lane['compared']} · prefix-survival scenarios {sc} · the model's own cost at the observed TTL vs the "
+            f"observed cost {signed(lane['model_check'])}")
+
+
+def ttl_line(c: str, lane: Dict[str, Any]) -> str:
+    v = lane["verdict"]
+    head = "either TTL" if v == "either" else (v.upper() if v.startswith("keep") else "SWITCH TO " + v)
+    note = f", {lane['verdict_note']}" if lane.get("verdict_note") else ""
+    return f"{lane['name']}: {head} (1h vs 5m {signed(lane['delta_1h_vs_5m']['point'])}{note})"
+
 
 def esc(s: Any) -> str:
     return html.escape(str(s))
@@ -245,6 +292,34 @@ def build_html(r: Dict[str, Any]) -> str:
              (rec_card(f"Fallback: {gr['label']}", gr, big=gr["saving_on_claude_code_history"],
                        sub=f"this rule on your Claude Code history · sampling confidence <b>{esc(gr['confidence'])}</b>", extra=g_extra)
               if gr else rec_card("Fallback: global", None)) + "</div>" + range_html(recs.get("claude_code")))
+
+    # which TTL
+    tc = r.get("ttl_choice") or {}
+    if tc.get("available"):
+        P.append("<h2>Which TTL: 5 minutes or 1 hour</h2><p class=ink2>A 1-hour cache write costs 2× the input price "
+                 "instead of 1.25×; in return a request 5–60 minutes after the previous one reads the cache (0.1×) "
+                 "instead of writing it again. Claude Code sets the TTL separately for conversations "
+                 "(promptCacheTtl) and for subagents (subagentPromptCacheTtl); a scripted run can set its own "
+                 "(CLAUDE_CODE_PROMPT_CACHE_TTL). Each kind of traffic is modelled request by request over your "
+                 "history; cache-clock is layered on the interactive lane only. Costs use API list-price ratios; "
+                 "whether a subscription's usage meter weighs 1-hour writes at 2× is not established. Helper "
+                 "requests follow the subagent setting but leave no transcript, so they are not counted.</p>")
+        for ln in TTL_ORDER:
+            lane = tc["lanes"].get(ln)
+            if not lane:
+                continue
+            P.append(f"<h3>{esc(ttl_line(ln, lane))}</h3><p>{esc(ttl_how(ln, lane))}</p>")
+            P.append(table(["option", "total (input-token eq.)", f"vs {lane['observed_ttl'] or '5m'} without the mod", "rule"],
+                           ttl_option_rows(lane)))
+            P.append(f"<p class=muted>{esc(ttl_facts(lane, tc))}</p>")
+            if lane.get("delta_without_mod"):
+                dw = lane["delta_without_mod"]
+                P.append(f"<p class=muted>Without cache-clock: 1h vs 5m {signed(dw['point'])} (90% {signed(dw['lo'])} "
+                         f"to {signed(dw['hi'])}).</p>")
+        P.append(f"<p class=muted>Prefix survival f (share of the earlier context a 1-hour cache still serves 5–60 "
+                 f"minutes later): {share(tc['f'])}, {esc(tc['f_source'])} ({tc['f_pairs']} returns). Only requests "
+                 "that ran at 5 minutes are modelled with it. A new conversation reads another's cached system prompt "
+                 "and tools only when one of the same kind ran within the TTL.</p>")
 
     # out of what
     sp = r.get("spend")
@@ -494,6 +569,18 @@ def build_md(r: Dict[str, Any]) -> str:
         if key == "global":
             L += [f"On your Claude Code history: {pc(rec['saving_on_claude_code_history'])}.", ""]
         L += [rec["when"], ""]
+    tc = r.get("ttl_choice") or {}
+    if tc.get("available"):
+        L += ["## Which TTL: 5 minutes or 1 hour", ""]
+        for ln in TTL_ORDER:
+            lane = tc["lanes"].get(ln)
+            if not lane:
+                continue
+            L += [f"**{ttl_line(ln, lane)}** — {ttl_how(ln, lane)}", "",
+                  f"| option | total | vs {lane['observed_ttl'] or '5m'} without the mod | rule |",
+                  "|---|---:|---:|---|"]
+            L += [f"| {a} | {b} | {d} | {e} |" for a, b, d, e in ttl_option_rows(lane)]
+            L += ["", ttl_facts(lane, tc), ""]
     sp = r.get("spend")
     if sp:
         L += ["## Out of what: the saving as a share of your spend", "", spend_lead(sp), "",
@@ -532,6 +619,22 @@ def photo_spend(sp: Optional[Dict[str, Any]]) -> str:
              if st["collected"] else f"{short.get(st['step'], st['step'])} not collected" for st in sp["steps"]]
     unc = f"<p><small>no token counts: {esc(' '.join(sp['uncounted_tools']))}</small></p>" if sp["uncounted_tools"] else ""
     return (f"<h2>SAVED {kt(sp['saved'])} AS A SHARE OF</h2><p>" + "<br>".join(esc(x) for x in lines) + "</p>" + unc)
+
+
+def photo_ttl(tc: Optional[Dict[str, Any]]) -> str:
+    if not tc or not tc.get("available"):
+        return "<h2>TTL</h2><p>no ttl.jsonl</p>"
+    lines = []
+    for c in TTL_ORDER:
+        lane = tc["lanes"].get(c)
+        if not lane:
+            continue
+        d = lane["delta_1h_vs_5m"]
+        lines.append(f"{ {'main': 'interactive', 'headless': 'scripted', 'subagent': 'subagents'}[c]} "
+                     f"now={lane['observed_ttl']} → {lane['verdict'].upper()} 1h-vs-5m {signed(d['point'])} "
+                     f"[{signed(d['lo'])},{signed(d['hi'])}] n={lane['requests']} "
+                     f"5-60m={share(lane['gaps'].get('5-60 min', 0) / (lane['requests'] or 1))}")
+    return (f"<h2>TTL (f={share(tc['f'])})</h2><p>" + "<br>".join(esc(x) for x in lines) + "</p>")
 
 
 def build_photo(r: Dict[str, Any]) -> str:
@@ -573,6 +676,7 @@ def build_photo(r: Dict[str, Any]) -> str:
             + (block("FALLBACK " + gr["label"].upper(), gr,
                      f"<p>on Claude Code history: {pc(gr.get('saving_on_claude_code_history'))} (not independent)</p>")
                if gr else "")
+            + photo_ttl(r.get("ttl_choice"))
             + photo_spend(r.get("spend"))
             + f"<h2>COVERAGE</h2><p>{esc(cov)}</p>"
             + f"<p>stretches={c['stretches']} midturn={c['midturn_at_first_action']} never={pc(c['return_table']['never_share'])} "
