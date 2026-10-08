@@ -7,7 +7,7 @@
   },
   "homepage": "https://github.com/edd426/cache-clock",
   "repository": "https://github.com/edd426/cache-clock",
-  "license": "MIT OR Apache-2.0",
+  "license": "MIT",
   "keywords": [
     "prompt-cache",
     "compaction",

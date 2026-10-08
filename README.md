@@ -101,5 +101,4 @@ python3 -m unittest discover -s skills/cache-policy-study/tests
 
 ## License
 
-Dual-licensed under [MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE), at your option — the two licenses
-most company open-source policies pre-approve; Apache 2.0 adds an explicit patent grant.
+[MIT](LICENSE).
