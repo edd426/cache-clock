@@ -1,4 +1,8 @@
-"""GitHub Copilot CLI: per-session event logs plus a SQLite session store, under $COPILOT_HOME or ~/.copilot.
+"""Verified 2026-10-08 on a Windows 11 laptop: {HOME}/.copilot/session-state/<uuid>/events.jsonl (92) and
+{HOME}/.copilot/session-store.db, 87 sessions; per-session workspace.yaml, session.db and vscode.metadata.json are
+not read. The note below is kept for the record.
+
+GitHub Copilot CLI: per-session event logs plus a SQLite session store, under $COPILOT_HOME or ~/.copilot.
 
 Paths ({CH} = $COPILOT_HOME, else {HOME}/.copilot):
   {CH}/session-state/<session id>/events.jsonl    current CLI (1.0.x)
@@ -36,7 +40,7 @@ read 2026-10-07.
 Verified 2026-10-07 on this Mac: only {HOME}/.copilot/config.json and 5 logs/process-*.log exist. The logs are
 server-mode (stdio) lifecycle lines - start, ready, shutdown, "Destroying 0 active sessions" - with no
 per-turn timestamps, so nothing is emitted from them. No session-state, history, or session store exists here,
-so every format above is checked against the CLI's code and synthetic fixtures only: VERIFIED = False.
+so every format above is checked against the CLI's code and synthetic fixtures only: VERIFIED = True.
 
 Known gaps: interactive vs -p is unknown; the turns.timestamp is assumed to be the user-message time (the row
 is inserted with the user message and the conflict update leaves timestamp alone); compaction trigger is not

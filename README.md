@@ -17,7 +17,18 @@ cache ○ auto-compacted 415k→15k · next prompt writes ~15k
 /plugin install cache-clock --marketplace edd426/cache-clock
 ```
 
-Answer `y` to add the marketplace and pick the user scope. Requires a Claude Code build with function-hook
+Answer `y` to add the marketplace and pick the user scope. Where the marketplace can't be reached (a work laptop, say), clone the
+repo and install from the folder; the folder is read in place, so `git pull` plus `/reload-plugins` updates it:
+
+```
+git clone https://github.com/edd426/cache-clock
+claude plugin marketplace add "$PWD/cache-clock"
+claude plugin install cache-clock@cache-clock --scope user
+echo '{"ttl":"5m"}' | claude plugin configure cache-clock@cache-clock --values-stdin
+```
+
+`--values-stdin` takes a JSON object of strings (`"true"`, `"2.5"`). On an API key or a gateway, set `ttl` to
+`5m` as above: a mod can't see which kind of key is in use. Requires a Claude Code build with function-hook
 plugins (tested on 2.1.292). It runs only in interactive sessions: `claude -p` and SDK runs load it inert.
 
 ## What it does at the deadline
@@ -65,7 +76,7 @@ The plugin ships a skill, `cache-policy-study`, that replays your own history �
 you stay away, how big the context is when you leave — against every rule of the shape above and tells you
 whether to keep the defaults or change them, and which cache TTL to use, with session-clustered bootstrap intervals, a temporal holdout and
 sensitivity rows. It reads Claude Code, Codex, Gemini CLI, Antigravity, VS Code Copilot Chat, Cursor and
-Copilot CLI history plus the OS sleep log (macOS verified; Windows and Linux readers untested), never calls a
+Copilot CLI history plus the OS sleep log (macOS and Windows verified; Linux untested), never calls a
 model, and keeps prompt text, paths and project names out of its reports. Every saving it reports comes with its share of
 your total spend, as in the table below. Ask Claude something like *"run the
 cache policy study"*, or directly:
@@ -74,8 +85,9 @@ cache policy study"*, or directly:
 python3 skills/cache-policy-study/scripts/study.py --out ./cache-policy-study
 ```
 
-Only the Claude Code and Codex readers have been checked against real stores; the others are built from
-format documentation and flagged as unverified in the report.
+Checked against real stores: Claude Code and Codex (macOS and Windows), Gemini CLI, Cursor, VS Code Copilot Chat
+and Copilot CLI (Windows 11). Antigravity is partial: its times read, but its model calls carry no timestamp, so
+its tokens are not counted yet. On Windows `python3` is often the Microsoft Store stub — use `python` or `py -3`.
 
 ## 1 hour or 5 minutes?
 

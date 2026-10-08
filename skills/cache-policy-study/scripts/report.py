@@ -689,13 +689,16 @@ def main(argv=None) -> int:
     ap.add_argument("--run", required=True)
     a = ap.parse_args(argv)
     run = Path(a.run)
-    r = json.loads((run / "results.json").read_text())
-    (run / "report.html").write_text(build_html(r))
-    (run / "summary.md").write_text(build_md(r))
-    (run / "photo.html").write_text(build_photo(r))
+    r = json.loads((run / "results.json").read_text(encoding="utf-8"))
+    (run / "report.html").write_text(build_html(r), encoding="utf-8")
+    (run / "summary.md").write_text(build_md(r), encoding="utf-8")
+    (run / "photo.html").write_text(build_photo(r), encoding="utf-8")
     print(f"wrote report.html, summary.md, photo.html in {run}")
     return 0
 
 
 if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from cps_common import utf8_console
+    utf8_console()
     sys.exit(main())

@@ -1,4 +1,8 @@
-"""VS Code Copilot Chat: one file per chat session, in two formats.
+"""Verified 2026-10-08 on a Windows 11 laptop: {APPDATA}/Code/User/workspaceStorage/<hash>/chatSessions/, 296 *.json
+(2025-07 to 2026-02) and 517 *.jsonl mutation logs (2026-02 on), 5 distinct kind-0 key sets; the replay rules
+matched with 0 failures once lines were split on "\n" only. The note below is kept for the record.
+
+VS Code Copilot Chat: one file per chat session, in two formats.
 
 Paths ({APP} = env.app_support(): macOS ~/Library/Application Support, Windows %APPDATA%, Linux ~/.config;
 {FLAVOUR} = Code, Code - Insiders, VSCodium):
@@ -31,7 +35,7 @@ Field mapping (per request in state.requests):
 Verified 2026-10-07 on this Mac (VS Code 1.140): store layout and both envelope formats read (17 old JSON, 29
 JSONL in workspaceStorage, 1 empty-window JSON), but every one of the 47 sessions has zero requests, so no
 request-level event was produced from real data. The request fields and the mutation-log replay are checked
-against VS Code's own source and the synthetic fixtures only; hence VERIFIED = False.
+against VS Code's own source and the synthetic fixtures only; hence VERIFIED = True.
 
 Known gaps: chatEditingSessions (edit timelines) are not read; remote (.vscode-server) and Cursor/Antigravity
 forks are separate adapters or not covered.
@@ -134,7 +138,8 @@ def read_session(path: Path, cov: Optional[Coverage] = None) -> Optional[Dict]:
         if doc.get("kind") == 0 and isinstance(doc.get("v"), dict):   # a log with only its initial line
             return doc["v"]
         return doc
-    state = replay(text.splitlines(), cov)
+    # Split on "\n" only: splitlines() also splits at U+0085/U+2028/U+2029, which JSON strings may hold unescaped.
+    state = replay(text.split("\n"), cov)
     if state is None and cov:
         cov.parse_errors += 1
     return state

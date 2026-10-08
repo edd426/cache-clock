@@ -1,6 +1,6 @@
 {
   "name": "cache-clock",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Status-line countdown to prompt-cache expiry; keeps small contexts warm and compacts large ones before the cache lapses",
   "author": {
     "name": "Evan DeLord"

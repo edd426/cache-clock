@@ -100,7 +100,7 @@ def read_current(settings_path: Optional[Path] = None) -> Tuple[Dict[str, Any], 
         settings_path = Path(base) / "settings.json" if base else Path.home() / ".claude" / "settings.json"
     cur = dict(MOD_DEFAULTS)
     try:
-        d = json.loads(Path(settings_path).read_text())
+        d = json.loads(Path(settings_path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return cur, "mod defaults"
     opts = None
@@ -307,7 +307,7 @@ def load_sleep(run: Path) -> Optional[Dict[str, Any]]:
     if not p.exists():
         return None
     try:
-        d = json.loads(p.read_text())
+        d = json.loads(p.read_text(encoding="utf-8"))
     except ValueError:
         return None
     iv = []
@@ -972,7 +972,7 @@ def load_spend(run: Path, events: List[dict]) -> Tuple[List[dict], bool]:
     """spend.json from collect.py; without it, only what events.jsonl kept (no subagents, no scripted runs)."""
     p = run / "spend.json"
     if p.exists():
-        return json.loads(p.read_text()).get("rows", []), True
+        return json.loads(p.read_text(encoding="utf-8")).get("rows", []), True
     led: Dict[Any, Dict[str, int]] = {}
     for e in events:
         spend_add(led, e)
@@ -1134,14 +1134,14 @@ def analyze(run: Path, pricing_path: Path = DEFAULT_PRICING, ttl_opt: str = "aut
             n_res: int = 1000, lead: Optional[float] = None, settings_path: Optional[Path] = None) -> Dict[str, Any]:
     t_start = time.time()
     rnd = random.Random(seed)
-    pricing = {kk: v for kk, v in json.loads(Path(pricing_path).read_text()).items() if not kk.startswith("_")}
+    pricing = {kk: v for kk, v in json.loads(Path(pricing_path).read_text(encoding="utf-8")).items() if not kk.startswith("_")}
     tool_prices = pricing.pop("per_tool", None) or {}
     current, cur_src = read_current(settings_path)
     lead_src = "--lead" if lead is not None else ("your settings" if cur_src == "your settings" else "mod default")
     lead = float(lead if lead is not None else current["lead"])
     events = load_events(run)
     cov_path = run / "coverage.json"
-    coverage = json.loads(cov_path.read_text()) if cov_path.exists() else {"tools": []}
+    coverage = json.loads(cov_path.read_text(encoding="utf-8")) if cov_path.exists() else {"tools": []}
     data_end = max((e["t"] for e in events), default=0.0)
     cc = build_cc(events, ttl_opt, data_end, lead, current)
     sp, T, ttl = cc["space"], cc["T"], cc["ttl"]
@@ -1449,11 +1449,13 @@ def main(argv=None) -> int:
         return 2
     r = analyze(run, Path(a.pricing), a.ttl, a.seed, max(1, a.resamples), a.lead,
                 Path(a.settings) if a.settings else None)
-    (run / "results.json").write_text(json.dumps(r, indent=1, ensure_ascii=False))
+    (run / "results.json").write_text(json.dumps(r, indent=1, ensure_ascii=False), encoding="utf-8")
     print("\n".join(r["summary_lines"]))
     print(f"[{r['seconds']} s] results.json written")
     return 0
 
 
 if __name__ == "__main__":
+    from cps_common import utf8_console
+    utf8_console()
     sys.exit(main())

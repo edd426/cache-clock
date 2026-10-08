@@ -111,7 +111,7 @@ def main(argv=None) -> int:
     write_jsonl(out / "ttl.jsonl", ttl_rows)
     (out / "spend.json").write_text(json.dumps({
         "_note": "tokens per tool x class (main = interactive main thread, subagent, headless = scripted runs and their subagents) x UTC day; responses without token counts are counted in responses only",
-        "rows": spend_rows(ledger)}, indent=0))
+        "rows": spend_rows(ledger)}, indent=0), encoding="utf-8")
     meta = {"generated": datetime.now(timezone.utc).isoformat(), "system": env.system,
             "since": a.since, "until": a.until, "include_headless": a.include_headless, "tools": coverage}
 
@@ -126,16 +126,18 @@ def main(argv=None) -> int:
             span = [round(first, 3), round(time.time(), 3)] if first is not None else None
             (out / "sleep.json").write_text(json.dumps({"intervals": intervals, "window": span,
                                                         "roots_checked": pcov.roots_checked,
-                                                        "notes": pcov.notes}, indent=1))
+                                                        "notes": pcov.notes}, indent=1), encoding="utf-8")
             meta["power"] = {"status": "ok" if pcov.roots_found else "absent", "intervals": len(intervals),
                              "notes": pcov.notes}
         except ImportError:
             meta["power"] = {"status": "not-built"}
         except Exception as exc:
             meta["power"] = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
-    (out / "coverage.json").write_text(json.dumps(meta, indent=1))
+    (out / "coverage.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
     return 0
 
 
 if __name__ == "__main__":
+    from cps_common import utf8_console
+    utf8_console()
     sys.exit(main())

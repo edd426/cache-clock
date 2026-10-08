@@ -14,7 +14,9 @@ The interval's reason is the first Sleep's "Entering Sleep state due to '<reason
 'Idle Sleep', ...); the Maintenance Sleeps after DarkWakes stay inside it. Reference check on this Mac,
 2026-09-23..10-07: 1584 Sleep, 1568 DarkWake, 19 Wake records -> 19 intervals.
 
-Windows (UNVERIFIED — no Windows machine here): `wevtutil qe System /q:<XPath> /f:xml` for
+Windows (verified 2026-10-08 on a Windows 11 Modern Standby laptop, log back ~3 months: 727 Kernel-Power pairs
++ 35 Power-Troubleshooter → 657 intervals, all Modern Standby):
+`wevtutil qe System /q:<XPath> /f:xml` for
   - Microsoft-Windows-Power-Troubleshooter EventID 1 "The system has returned from a low power state",
     EventData SleepTime / WakeTime (UTC, 7 fractional digits) -> one interval directly;
   - Microsoft-Windows-Kernel-Power 42 (entering sleep) -> next 107 (resumed from sleep);
@@ -47,7 +49,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from cps_common import Coverage, Env
 
-VERIFIED = platform.system() == "Darwin"
+VERIFIED = platform.system() in ("Darwin", "Windows")
 
 ASL_DIR = Path("/private/var/log/powermanagement")
 TIMEOUT = 60

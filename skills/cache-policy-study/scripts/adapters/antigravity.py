@@ -1,4 +1,11 @@
-"""Google Antigravity (agentic IDE and its `agy` CLI): conversations under {HOME}/.gemini/antigravity*/.
+"""Checked 2026-10-08 on a Windows 11 laptop — PARTIAL. Only {HOME}/.gemini/antigravity-cli exists there
+(conversations/<uuid>.db 71, brain/<uuid>/.system_generated/logs/transcript.jsonl 64). The .db tables are as
+expected and steps.metadata field 1 is a Timestamp (prompts decode), but gen_metadata.data -> chatModel carries
+no timestamp anywhere (field 9 = {2: uint64 id, 10: {1, ...}}), so all 11,667 model calls are dropped (t = None);
+usage sits at chatModel.4 in 11,616 rows. Responses therefore come from transcript.jsonl (times, no usage): 0
+tokens reach the spend ledger. Fix: join gen_metadata to steps (or the transcript) for a time. Not fixed yet.
+
+Google Antigravity (agentic IDE and its `agy` CLI): conversations under {HOME}/.gemini/antigravity*/.
 
 UNVERIFIED (no Antigravity install on the machine this was written on); nothing here comes from official docs,
 which document no storage paths. Sources (read 2026-10-07):

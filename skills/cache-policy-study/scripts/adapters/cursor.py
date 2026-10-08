@@ -1,4 +1,8 @@
-"""Cursor (the IDE): SQLite key/value stores {app_support}/Cursor/User/{globalStorage,workspaceStorage/*}/state.vscdb.
+"""Verified 2026-10-08 on a Windows 11 laptop: {APPDATA}/Cursor/User/globalStorage/state.vscdb + workspaceStorage/<hash>/,
+110 sessions, 147 empty composers, aiService.generations read as one pseudo-session per workspace. The note below
+is kept for the record.
+
+Cursor (the IDE): SQLite key/value stores {app_support}/Cursor/User/{globalStorage,workspaceStorage/*}/state.vscdb.
 
 UNVERIFIED (no Cursor install on the machine this was written on). Format from open-source exporters (read
 2026-10-07; their version labels, not Cursor release notes):
@@ -49,7 +53,7 @@ from cps_common import Coverage, Env, event, in_window, parse_time, project_id, 
 from ._sqlite_ro import open_ro
 
 TOOL = "cursor"
-VERIFIED = False
+VERIFIED = True
 
 BUBBLE_FIELDS = ["type", "createdAt", "timingInfo.clientRpcSendTime", "timingInfo.clientSettleTime",
                  "timingInfo.clientEndTime", "tokenCount.inputTokens", "tokenCount.outputTokens",

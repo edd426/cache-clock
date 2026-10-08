@@ -1,4 +1,8 @@
-"""Gemini CLI: chat recordings under {GEMINI_CLI_HOME or HOME}/.gemini/tmp/<project>/chats/.
+"""Verified 2026-10-08 on a Windows 11 laptop: {HOME}/.gemini/tmp/<project>/chats/session-<ts>-<id8>.jsonl (+ .json),
+111 files, 155 sessions including logs.json-only ones; chats/<parent>/<agent>.jsonl subagents skipped. The note below
+is kept for the record.
+
+Gemini CLI: chat recordings under {GEMINI_CLI_HOME or HOME}/.gemini/tmp/<project>/chats/.
 
 UNVERIFIED (no Gemini CLI store on the machine this was written on). Format read from the v0.63.0 source
 (latest stable, 2026-10-06):
@@ -44,7 +48,7 @@ from typing import Dict, Iterator, List, Optional
 from cps_common import Coverage, Env, event, in_window, iter_jsonl, parse_time, project_id, usage
 
 TOOL = "gemini-cli"
-VERIFIED = False
+VERIFIED = True
 
 
 def roots(env: Env) -> List[Path]:

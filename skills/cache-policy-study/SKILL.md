@@ -16,6 +16,7 @@ python3 "$SKILL/scripts/study.py" --out "./cache-policy-study-$(date +%F)"
 ```
 
 Windows (PowerShell): `python "$env:SKILL\scripts\study.py" --out ".\cache-policy-study-$(Get-Date -Format yyyy-MM-dd)"`.
+On Windows `python3` is often the Microsoft Store stub: use `python` (also in Git Bash) or `py -3`.
 
 It runs three steps, each runnable alone: `collect.py` (history stores → `events.jsonl`, `ttl.jsonl`,
 `spend.json`, `coverage.json`, `sleep.json`), `analyze.py --run DIR` (→ `results.json`), `report.py --run DIR` (→ `report.html`,
@@ -28,7 +29,8 @@ behaviour by default but always counted).
 1. **Coverage** (`report.html` → Data coverage). Every tool the user uses should be `ok` with a plausible
    per-month histogram. A sudden cut-off month usually means a store with two formats where one was missed
    (it happened before with VS Code Copilot). A tool marked *unverified adapter* was built from public
-   format documentation, not checked against a real store: if its numbers look wrong, inspect the store
+   format documentation, not checked against a real store (Antigravity: on Windows its model calls carry no
+   timestamp, so its spend reads 0 — see the adapter's docstring): if its numbers look wrong, inspect the store
    (`python3 scripts/collect.py --only <tool> --out /tmp/x` and read `coverage.json` notes) before using them.
 2. **TTL validation.** Misses should be near 0% below the TTL and near 100% above it. If not, the cache model
    does not match this user's plan and the savings are not trustworthy.

@@ -46,10 +46,12 @@ class Env:
 
     def placeholder(self, path: Path) -> str:
         """A path with the home folder replaced, for coverage notes (never print raw user paths)."""
-        s = str(path)
+        # Forward slashes on every OS; Windows paths compare case-insensitively.
+        s = path.as_posix()
+        fold = (lambda x: x.lower()) if self.system == "Windows" else (lambda x: x)
         for base, name in ((self.appdata, "{APPDATA}"), (self.localappdata, "{LOCALAPPDATA}"), (self.home, "{HOME}")):
-            if base and s.startswith(str(base)):
-                return name + s[len(str(base)):]
+            if base and fold(s).startswith(fold(base.as_posix())):
+                return name + s[len(base.as_posix()):]
         return s
 
 
@@ -194,3 +196,10 @@ def read_jsonl(path: Path) -> List[Dict[str, Any]]:
 
 def eprint(*a: Any) -> None:
     print(*a, file=sys.stderr)
+
+
+def utf8_console() -> None:
+    """Legacy Windows console code pages cannot print the report's ≤, →, ±."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
