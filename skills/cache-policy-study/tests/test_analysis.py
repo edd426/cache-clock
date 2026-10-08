@@ -181,7 +181,7 @@ class PlantedBehaviour(unittest.TestCase):
             self.assertEqual(alt["maxKeepAlives"], 2)
             self.assertTrue(60e3 < alt["keepAliveBelowTokens"] <= 200e3, alt)
             self.assertTrue(200e3 < alt["compactAboveTokens"] <= 500e3, alt)
-            self.assertEqual(alt["leadMinutes"], 3.0)          # lead is an input, never searched
+            self.assertEqual(alt["leadMinutes"], 3.0)          # the rule search holds the lead; lead_fit varies it
             self.assertLess(rec["alternative"]["gain_median"], 1.0)
 
     def test_change_when_current_settings_are_clearly_worse(self):
@@ -366,6 +366,25 @@ class SleepMask(unittest.TestCase):
             self.assertEqual(s["affected"], 1)
             self.assertEqual(s["darkwake_intervals"], 1)
             self.assertEqual(s["with_darkwake"]["affected"], 2)
+
+
+class LeadFit(unittest.TestCase):
+    def test_five_minute_ttl_acts_late(self):
+        """5-minute TTL, people back after 4:05-4:25: acting at 2:30 or 4:00 pings and compacts for nothing; 4:30 does not."""
+        g = Gen()
+        t = 1.8e9
+        for i in range(80):
+            g.walk(f"s{i}", t + i * 3 * H, 400_000 if i % 2 else 80_000, 245 + (i % 5) * 5)
+        with tempfile.TemporaryDirectory() as sd:
+            sp = Path(sd) / "settings.json"
+            sp.write_text(json.dumps({"pluginConfigs": {"cache-clock@local": {"options": {"leadMinutes5m": 2.5}}}}))
+            tmp, _, r = run_analysis(g, ttl="5m", settings=sp)
+            with tmp:
+                lf = r["lead"]["fit"]
+                self.assertEqual((lf["key"], lf["current_lead"], lf["best_lead"], lf["verdict"]), ("leadMinutes5m", 2.5, 0.5, "change"))
+                self.assertGreater(lf["gain_interval"][0], 0)
+                self.assertIn("Act later: leadMinutes5m 0.5 instead of 2.5", " ".join(r["summary_lines"]))
+                self.assertGreaterEqual(min(x["lead"] for x in lf["rows"]), 0.5)        # never inside 30 s
 
 
 class SpendLadder(unittest.TestCase):

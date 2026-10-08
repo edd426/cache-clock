@@ -39,8 +39,10 @@ B_GRID = [150e3, 200e3, 250e3, 300e3, 400e3, 500e3, 600e3, INF]
 N_GRID = [1, 2, 3, 4]
 BAND_EDGES = [0.0, 50e3, 75e3, 100e3, 125e3, 150e3, 200e3, 250e3, 300e3, 400e3, 600e3, INF]
 TABLE_CTX = [(0.0, 50e3, "<50k"), (50e3, 100e3, "50–100k"), (100e3, 300e3, "100–300k"), (300e3, INF, "≥300k")]
-MOD_DEFAULTS = {"A": 125e3, "B": 300e3, "N": 3, "lead": 3.0, "ttl": "1h"}   # cache-clock plugin.json
-SENS_LEADS = [2.0, 3.0, 5.0]
+MOD_DEFAULTS = {"A": 125e3, "B": 300e3, "N": 3, "lead": 3.0, "lead5m": 0.5, "ttl": "1h"}   # cache-clock plugin.json
+# Leads tried (minutes before expiry). Never under 0.5: the ping or compaction request must reach the server before
+# the entry expires, and the model cannot price one that lands late (a full re-write); 30 s is the margin kept.
+LEAD_GRID = {"1h": [0.5, 1.0, 2.0, 3.0, 5.0], "5m": [0.5, 1.0, 1.5, 2.0, 2.5]}
 MIN_BAND_N = 30
 CHANGE_MIN_POINTS = 1.0        # recommend a change only if the paired median gain is at least this …
 PRESENCE_KINDS = {"prompt", "response", "activity", "session_start", "session_end"}
@@ -112,7 +114,7 @@ def read_current(settings_path: Optional[Path] = None) -> Tuple[Dict[str, Any], 
     if not opts:
         return cur, "mod defaults"
     for src, dst, f in (("keepAliveBelowTokens", "A", float), ("compactAboveTokens", "B", float), ("maxKeepAlives", "N", int),
-                        ("leadMinutes", "lead", float), ("ttl", "ttl", str)):
+                        ("leadMinutes", "lead", float), ("leadMinutes5m", "lead5m", float), ("ttl", "ttl", str)):
         if opts.get(src) is not None:
             try:
                 cur[dst] = f(opts[src])
@@ -152,7 +154,7 @@ class Space:
 
     def threshold(self) -> float:
         """Earliest the mod could act at any lead considered (the sensitivity leads included)."""
-        return self.T - max(SENS_LEADS + [self.lead]) * 60 if self.T >= 1800 else self.T / 2
+        return self.T - max(LEAD_GRID["1h"] + [self.lead]) * 60 if self.T >= 1800 else self.T / 2
 
     def seg_of(self, C: float) -> int:
         return max(0, bisect.bisect_right(self.bps, C) - 1)
@@ -376,7 +378,12 @@ def return_label(between: List[dict], te: Optional[float], end_t: float, t0: flo
     return "other"
 
 
-def build_cc(events: List[dict], ttl_opt: str, data_end: float, lead: float, current: Dict[str, Any]) -> Dict[str, Any]:
+def lead_for(ttl: str, current: Dict[str, Any]) -> float:
+    """The mod's lead for a TTL: leadMinutes on the hour, leadMinutes5m on five minutes."""
+    return float(current["lead"] if ttl == "1h" else current.get("lead5m", MOD_DEFAULTS["lead5m"]))
+
+
+def build_cc(events: List[dict], ttl_opt: str, data_end: float, lead: Optional[float], current: Dict[str, Any]) -> Dict[str, Any]:
     sessions = cc_sessions(events)
     ttl_of, mix = {}, collections.Counter()
     for sid, ev in sessions.items():
@@ -389,7 +396,7 @@ def build_cc(events: List[dict], ttl_opt: str, data_end: float, lead: float, cur
     dominant = max(known, key=known.get) if known else "1h"
     ttl = dominant if ttl_opt == "auto" else ttl_opt
     T = 3600.0 if ttl == "1h" else 300.0
-    sp = Space(T, lead, current)
+    sp = Space(T, lead if lead is not None else lead_for(ttl, current), current)
     thr = sp.threshold()
 
     stretches, vpairs, comp_post_ctx, comp_post_tokens, comp_pre, miss_reads = [], [], [], [], [], []
@@ -650,9 +657,6 @@ def sensitivity(stretches, sp: Space, m, best: int, rec: int, pricing, ttl: str,
     other_write = pricing["cache_write_5m"] if ttl == "1h" else pricing["cache_write_1h"]
     variants: List[Tuple[str, Dict[str, Any], Optional[Callable[[dict], dict]], Optional[float]]] = [
         ("baseline", {}, None, None)]
-    for L in SENS_LEADS:
-        if L != sp.lead and L < sp.T / 60 / 2:
-            variants.append((f"act {L:g} min early (the model cannot price a late ping; see method)", {}, None, L))
     variants += [
         ("compaction reads the context uncached (1.0×)", {"compact_read": pricing.get("input", 1.0)}, None, None),
         ("summary output ×2", {"summary": m["summary"] * 2}, None, None),
@@ -937,29 +941,77 @@ def cache_economics(events: List[dict]) -> List[Dict[str, Any]]:
 
 # ----------------------------------------------------------------------------- recommendation
 
-def mod_by_ttl(events: List[dict], data_end: float, lead: float, current: Dict[str, Any],
+def mod_by_ttl(events: List[dict], data_end: float, lead: Optional[float], current: Dict[str, Any],
                pricing: Dict[str, float]) -> Dict[str, Dict[str, Any]]:
-    """For the TTL comparison: the mod's saving per session (vs doing nothing) under each TTL, for the current rule
-    and the rule that is best under that TTL, every interactive session counted whatever TTL it ran at."""
+    """For the TTL comparison: the mod's saving per session (vs doing nothing) under each TTL — your rule at the
+    lead you set for that TTL, the best rule and lead for that TTL, and pings only — every interactive session
+    counted whatever TTL it ran at."""
     out: Dict[str, Dict[str, Any]] = {}
     for t in ("5m", "1h"):
         c = build_cc(events, t, data_end, lead, current)
         sp, st = c["space"], c["stretches"]
         m = model_params(c, pricing)
-        res = search(st, sp, m)
         inv = {v: kk for kk, v in c["sess_index"].items()}
-        out[t] = {}
+        res = search(st, sp, m)
+        best = (sp, res, res["best"])
+        for L in LEAD_GRID[t]:
+            spL = Space(sp.T, L, current)
+            rL = search(st, spL, m)
+            if rL["totals"][rL["best"]] < best[1]["totals"][best[2]]:
+                best = (spL, rL, rL["best"])
         n_cur = sp.rules[sp.current][2]
-        for which, idx in (("current", sp.current), ("best", res["best"]), ("pings", None)):
+        out[t] = {}
+        for which, (sp_, r_, idx) in (("current", (sp, res, sp.current)), ("best", best), ("pings", (sp, res, None))):
             per: Dict[str, float] = collections.defaultdict(float)
-            rule = sp.rules[idx] if idx is not None else None
+            rule = sp_.rules[idx] if idx is not None else None
             for i, s_ in enumerate(st):
-                row = res["rows"][i]
+                row = r_["rows"][i]
                 atom = rule_atom(rule, s_["C"]) if rule else (n_cur, 0, 0)   # /cache-clock pings: never compacts
-                per[inv[s_["s"]]] += row[sp.ai[atom]] - row[sp.nothing]
-            out[t][which] = {"rule": rule_name(rule, sp.lead) if rule else
-                             f"≤{n_cur} ping{'s' if n_cur != 1 else ''} at any size, never compact · act {sp.lead:g} min early",
+                per[inv[s_["s"]]] += row[sp_.ai[atom]] - row[sp_.nothing]
+            out[t][which] = {"rule": rule_name(rule, sp_.lead) if rule else
+                             f"≤{n_cur} ping{'s' if n_cur != 1 else ''} at any size, never compact · act {sp_.lead:g} min early",
                              "per_session": dict(per), "n": len(st)}
+    return out
+
+
+def lead_fit(stretches: List[dict], sp: Space, m: Dict[str, float], ttl: str, current: Dict[str, Any],
+             rnd: random.Random, n_res: int) -> Dict[str, Any]:
+    """How late to act. Your rule and the best rule at every lead in LEAD_GRID; the lead verdict holds the rule fixed
+    (yours) and compares each lead with the one you run, session-clustered and paired."""
+    rows, per_lead, nothing, base = [], {}, [], None
+    for L in sorted(set(LEAD_GRID[ttl] + [sp.lead])):
+        spL = Space(sp.T, L, current)
+        r = search(stretches, spL, m)
+        base = r["base"]
+        nothing = [row[spL.nothing] for row in r["rows"]]      # doing nothing does not depend on the lead
+        per_lead[spL.lead] = [r["rows"][i][spL.ai[rule_atom(spL.rules[spL.current], s["C"])]] for i, s in enumerate(stretches)]
+        rows.append({"lead": spL.lead, "current_saving": saving(r["totals"][spL.current], r["base"]),
+                     "best_rule": rule_name(spL.rules[r["best"]]), "best_saving": saving(r["totals"][r["best"]], r["base"]),
+                     "is_current": spL.lead == sp.lead})
+    best = max(rows, key=lambda x: (x["current_saving"] if x["current_saving"] is not None else -1, -abs(x["lead"] - sp.lead)))
+    out: Dict[str, Any] = {"rows": rows, "current_lead": sp.lead, "best_lead": best["lead"],
+                           "key": "leadMinutes" if ttl == "1h" else "leadMinutes5m",
+                           "floor_note": "never under 0.5 min: the request must land before the entry expires; a late one is not priced"}
+    if best["lead"] == sp.lead or not stretches or not base:
+        out.update({"verdict": "keep", "gain_points": 0.0, "gain_interval": [0.0, 0.0]})
+        return out
+    by: Dict[int, List[int]] = collections.defaultdict(list)
+    for i, s in enumerate(stretches):
+        by[s["s"]].append(i)
+    keys = list(by)
+    a, b = per_lead[best["lead"]], per_lead[sp.lead]
+    gains = []
+    for _ in range(n_res):
+        idx = [i for _ in keys for i in by[keys[int(rnd.random() * len(keys))]]]
+        nb = sum(nothing[i] for i in idx)
+        if nb:
+            gains.append(100 * (sum(b[i] for i in idx) - sum(a[i] for i in idx)) / nb)
+    gains.sort()
+    lo, med, hi = gains[int(0.05 * (len(gains) - 1))], gains[len(gains) // 2], gains[int(0.95 * (len(gains) - 1))]
+    cur_row = next(x for x in rows if x["is_current"])
+    out.update({"verdict": "change" if lo > 0 and med >= CHANGE_MIN_POINTS else "keep",
+                "gain_points": 100 * (best["current_saving"] - cur_row["current_saving"]),
+                "gain_interval": [lo, hi], "gain_median": med})
     return out
 
 
@@ -1056,8 +1108,8 @@ def confidence(n: int, lo, hi, gap, near) -> str:
 
 def settings(rule, ttl: str, lead: float, act: bool = True) -> Dict[str, Any]:
     A, B, N = rule
-    return {"ttl": ttl, "autoAct": act, "leadMinutes": lead, "keepAliveBelowTokens": int(A), "maxKeepAlives": N,
-            "compactAboveTokens": int(B) if B < INF else 1_000_000_000}
+    return {"ttl": ttl, "autoAct": act, ("leadMinutes" if ttl == "1h" else "leadMinutes5m"): lead,
+            "keepAliveBelowTokens": int(A), "maxKeepAlives": N, "compactAboveTokens": int(B) if B < INF else 1_000_000_000}
 
 
 def recommend(sp: Space, best: int, tot, base, boot, n, hold_gap, ttl, current_src: str, when: str) -> Dict[str, Any]:
@@ -1138,13 +1190,13 @@ def analyze(run: Path, pricing_path: Path = DEFAULT_PRICING, ttl_opt: str = "aut
     tool_prices = pricing.pop("per_tool", None) or {}
     current, cur_src = read_current(settings_path)
     lead_src = "--lead" if lead is not None else ("your settings" if cur_src == "your settings" else "mod default")
-    lead = float(lead if lead is not None else current["lead"])
     events = load_events(run)
     cov_path = run / "coverage.json"
     coverage = json.loads(cov_path.read_text(encoding="utf-8")) if cov_path.exists() else {"tools": []}
     data_end = max((e["t"] for e in events), default=0.0)
     cc = build_cc(events, ttl_opt, data_end, lead, current)
     sp, T, ttl = cc["space"], cc["T"], cc["ttl"]
+    lead = sp.lead
     thr = sp.threshold()
     m = model_params(cc, pricing)
     st = cc["stretches"]
@@ -1178,6 +1230,7 @@ def analyze(run: Path, pricing_path: Path = DEFAULT_PRICING, ttl_opt: str = "aut
     for p in policies:
         p["saving"] = None if p["total"] is None else saving(p["total"], base)
     top_rules = sorted(range(len(tot)), key=lambda i: tot[i])[:8]
+    lf = lead_fit(st, sp, m, ttl, current, rnd, n_res)
     sens = sensitivity(st, sp, m, best, rec_idx, pricing, ttl, current)
     rec_cc["assumption_range"] = assumption_range(sens)
     if len(st) < 100:
@@ -1271,7 +1324,7 @@ def analyze(run: Path, pricing_path: Path = DEFAULT_PRICING, ttl_opt: str = "aut
     # ---- which TTL: 5 minutes or 1 hour, per kind of traffic, the mod layered on the interactive lane
     ttl_rows = ttl_mod.load(run)
     if ttl_rows:
-        ttl_choice = ttl_mod.compare(ttl_rows, pricing, m["W"], mod_by_ttl(events, data_end, lead, current, pricing),
+        ttl_choice = ttl_mod.compare(ttl_rows, pricing, m["W"], mod_by_ttl(events, data_end, None if lead_src != "--lead" else lead, current, pricing),
                                      n_res, rnd)
     else:
         ttl_choice = {"available": False}
@@ -1291,7 +1344,7 @@ def analyze(run: Path, pricing_path: Path = DEFAULT_PRICING, ttl_opt: str = "aut
         "generated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "seed": seed, "resamples": n_res,
         "pricing": pricing, "ttl": {"used": ttl, "T_seconds": T, "override": ttl_opt != "auto", "mix": cc["ttl_mix"],
                                     "excluded_sessions_other_ttl": cc["counts"].get("excluded_ttl_sessions", 0)},
-        "lead": {"used": sp.lead, "source": lead_src},
+        "lead": {"used": sp.lead, "source": lead_src, "fit": lf},
         "current": {"source": cur_src, "rule": rule_name(sp.rules[sp.current], sp.lead),
                     "settings": settings(sp.rules[sp.current], ttl, sp.lead)},
         "validation": cc["validation"],
@@ -1402,6 +1455,11 @@ def summary_lines(r: Dict[str, Any]) -> List[str]:
             lines.append("Your current rule is also the best simple rule")
     else:
         lines = ["No rule beats doing nothing: switch cache-clock to warn-only", ""]
+    lf = (r.get("lead") or {}).get("fit") or {}
+    if lf.get("verdict") == "change":
+        lo, hi = lf["gain_interval"]
+        lines.insert(1, f"Act later: {lf['key']} {lf['best_lead']:g} instead of {lf['current_lead']:g} — +{lf['gain_points']:.0f} pts "
+                        f"(90% {lo:+.0f} to {hi:+.0f}); the request then has {60 * lf['best_lead']:.0f} s to land")
     tc = r.get("ttl_choice") or {}
     lines.append(ttl_mod.short(tc) if tc.get("available") else "TTL " + r["ttl"]["used"] + " misses: " + miss_line(r["validation"]))
     g = r["recommendation"].get("global")

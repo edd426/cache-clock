@@ -1,6 +1,6 @@
 {
   "name": "cache-clock",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Status-line countdown to prompt-cache expiry; keeps small contexts warm and compacts large ones before the cache lapses",
   "author": {
     "name": "Evan DeLord"
@@ -34,9 +34,15 @@
     },
     "leadMinutes": {
       "type": "number",
-      "title": "Minutes before expiry to act",
-      "description": "When to ping or compact (study 2026-10-07: 2-5 minutes all within 0.3 points; 3 leaves margin for a slow request)",
+      "title": "Minutes before expiry to act (1-hour TTL)",
+      "description": "When to ping or compact on a 1-hour cache (study 2026-10-07: 0.5-5 minutes within 1 point; 3 leaves margin for a slow request)",
       "default": 3
+    },
+    "leadMinutes5m": {
+      "type": "number",
+      "title": "Minutes before expiry to act (5-minute TTL)",
+      "description": "When to ping or compact on a 5-minute cache: 0.5 acts at 4:30 of quiet. Acting at 2:30 pinged or compacted for people who were about to come back (study 2026-10-08: 43% vs 24% of idle-gap cost). Raise it if /cache-clock shows missed pings",
+      "default": 0.5
     },
     "keepAliveBelowTokens": {
       "type": "number",

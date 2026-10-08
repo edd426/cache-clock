@@ -101,6 +101,20 @@ def ttl_line(c: str, lane: Dict[str, Any]) -> str:
     return f"{lane['name']}: {head} (1h vs 5m {signed(lane['delta_1h_vs_5m']['point'])}{note})"
 
 
+def lead_rows(lf: Dict[str, Any]) -> List[Tuple[Any, ...]]:
+    return [(f"{x['lead']:g} min" + (" (yours)" if x["is_current"] else "") + (" ← best" if x["lead"] == lf["best_lead"] else ""),
+             pc(x["current_saving"], 1), pc(x["best_saving"], 1), x["best_rule"]) for x in lf["rows"]]
+
+
+def lead_lead(lf: Dict[str, Any]) -> str:
+    lo, hi = lf["gain_interval"]
+    v = (f"Change {lf['key']} to {lf['best_lead']:g}: +{lf['gain_points']:.1f} points of idle-gap cost (90% {lo:+.1f} to {hi:+.1f})."
+         if lf["verdict"] == "change" else f"Keep {lf['key']} at {lf['current_lead']:g}"
+         + ("." if lf["best_lead"] == lf["current_lead"] else f": {lf['best_lead']:g} is better by {lf['gain_points']:.1f} points, under the 1-point bar."))
+    return (v + " Acting later skips pings and compactions for people who were about to come back, and each ping keeps the "
+            "cache warm longer; " + lf["floor_note"] + ".")
+
+
 def esc(s: Any) -> str:
     return html.escape(str(s))
 
@@ -342,6 +356,11 @@ def build_html(r: Dict[str, Any]) -> str:
         if not sp["complete"]:
             notes.append("No spend.json: subagents and scripted runs were not collected (run collect.py).")
         P.append("<p class=muted>" + esc(" ".join(notes)) + "</p>")
+
+    lf = (r.get("lead") or {}).get("fit")
+    if lf:
+        P.append("<h2>How late to act</h2><p class=ink2>" + esc(lead_lead(lf)) + "</p>" + table(
+            ["minutes before expiry", "your rule saves", "best rule saves", "best rule at that lead"], lead_rows(lf)))
 
     # policy chart
     items = [(p["policy"].split(": ", 1)[0] if p["kind"] in ("current", "best") else p["policy"], p["saving"],
@@ -593,6 +612,10 @@ def build_md(r: Dict[str, Any]) -> str:
         if sp["uncounted_tools"]:
             L += ["", "No token counts (not in any total): " + ", ".join(sp["uncounted_tools"]) + "."]
         L.append("")
+    lf = (r.get("lead") or {}).get("fit")
+    if lf:
+        L += ["## How late to act", "", lead_lead(lf), "", "| minutes before expiry | your rule | best rule | best rule at that lead |",
+              "|---|---:|---:|---|"] + [f"| {a} | {b} | {c} | {d} |" for a, b, c, d in lead_rows(lf)] + [""]
     L += ["## Policies", "", "| policy | saving |", "|---|---:|"]
     L += [f"| {p['policy']} | {pc(p['saving'], 1)} |" for p in r["claude_code"]["policies"]]
     L += ["", "## TTL validation", "", "| gap | returns | misses |", "|---|---:|---:|"]
@@ -653,7 +676,7 @@ def build_photo(r: Dict[str, Any]) -> str:
         return (f"<section><h2>{esc(title)}</h2><p>{esc(verdict_line(rec).upper())}</p>"
                 f"<p class=big>{pc(rec['saving'])} <small>[{esc(interval(rec)) or 'n/a'}] "
                 f"n={rec['n']} sampling {esc(rec['confidence'])}</small></p><p>{esc(rec['rule'])}</p>{extra}"
-                f"<p>ttl={esc(st['ttl'])} lead={st['leadMinutes']:g} keepAliveBelow={st['keepAliveBelowTokens']} "
+                f"<p>ttl={esc(st['ttl'])} lead={st.get('leadMinutes', st.get('leadMinutes5m')):g} keepAliveBelow={st['keepAliveBelowTokens']} "
                 f"maxKeepAlives={st['maxKeepAlives']} compactAbove={st['compactAboveTokens']} autoAct={str(st['autoAct']).lower()}</p>"
                 f"{alt_s}</section>")
     cov = " · ".join(f"{t['tool']} {t.get('status')}" + (f" {t.get('interactive_sessions') or 0}/{t.get('sessions') or 0}"
@@ -676,6 +699,9 @@ def build_photo(r: Dict[str, Any]) -> str:
             + (block("FALLBACK " + gr["label"].upper(), gr,
                      f"<p>on Claude Code history: {pc(gr.get('saving_on_claude_code_history'))} (not independent)</p>")
                if gr else "")
+            + (f"<h2>LEAD ({esc(r['lead']['fit']['key'])})</h2><p>" + esc(" · ".join(
+                f"{x['lead']:g}m {pc(x['current_saving'])}" for x in r["lead"]["fit"]["rows"])) + f" → {esc(r['lead']['fit']['verdict'].upper())} "
+               f"{r['lead']['fit']['best_lead']:g}</p>" if (r.get("lead") or {}).get("fit") else "")
             + photo_ttl(r.get("ttl_choice"))
             + photo_spend(r.get("spend"))
             + f"<h2>COVERAGE</h2><p>{esc(cov)}</p>"

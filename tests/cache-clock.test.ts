@@ -235,7 +235,7 @@ test('ttl auto: Claude Code\'s promptCacheTtl setting sets the clock', async ($,
   await h.clock.advance(1000)
   expect(h.statuses.at(-1)).toBe('cache ◷ 4m59s left')
   const { text } = await runCommand($)
-  expect(text).toContain('TTL 5m — promptCacheTtl setting, acting 2.5 min before expiry')
+  expect(text).toContain('TTL 5m — promptCacheTtl setting, acting 0.5 min before expiry')
 })
 
 test('ttl auto: an exported FORCE_PROMPT_CACHING_5M wins over the setting', async ($, on) => {
@@ -244,10 +244,12 @@ test('ttl auto: an exported FORCE_PROMPT_CACHING_5M wins over the setting', asyn
   await turn($)
   await h.clock.advance(1000)
   expect(h.statuses.at(-1)).toBe('cache ◷ 4m59s left')
-  await h.clock.advance(2 * MIN)
+  await h.clock.advance(4 * MIN)
   expect(h.actions).toEqual([])
   await h.clock.advance(30 * 1000)
-  expect(h.actions).toEqual(['ping'])         // acts 2.5 min before a 5-minute expiry
+  expect(h.actions).toEqual(['ping'])         // acts 30 s before a 5-minute expiry
+  const { text } = await runCommand($)
+  expect(text).toContain('ping round trip: median')
 })
 
 test('ttl auto: Bedrock without the 1-hour switch is 5 minutes', async ($, on) => {
@@ -301,4 +303,14 @@ test('a fixed ttl option ignores settings and the cache\'s behaviour', { options
   for (let i = 0; i < 2; i++) { await h.clock.advance(20 * MIN); await turn($) }
   await h.clock.advance(1000)
   expect(h.statuses.at(-1)).toBe('cache ◷ 59m59s left')
+})
+
+test('leadMinutes5m sets the 5-minute lead; leadMinutes still sets the hour\'s', { options: { ttl: '5m', leadMinutes5m: 1, leadMinutes: 10 } }, async ($, on) => {
+  const h = harness(on, 80_000)
+  await start($)
+  await turn($)
+  await h.clock.advance(3 * MIN + 30 * 1000)
+  expect(h.actions).toEqual([])
+  await h.clock.advance(31 * 1000)
+  expect(h.actions).toEqual(['ping'])         // acts at 4:00 of quiet
 })

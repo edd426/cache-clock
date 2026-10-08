@@ -14,10 +14,17 @@ tool. No prompt text, paths or project names reach the analysis.
 
 1. **Current rule and lead.** Your cache-clock settings are read from Claude Code's `settings.json`
    (`pluginConfigs` → `cache-clock*` → `options`); without them, the mod defaults (<125k up to 3 pings, 125–300k
-   one ping then compact, ≥300k compact, 3 min early). The lead is an **input** (`--lead`, default your setting or
-   3): the model has no cost for acting late, so searching over it always picks the shortest lead, while the mod
-   measures its deadline from the *end* of a request and a slow request leaves less margin than the lead says.
-   Leads 2/3/5 appear only as sensitivity rows.
+   one ping then compact, ≥300k compact, 3 min early on the hour, 30 s on five minutes). The rule search holds the
+   lead you run (`leadMinutes` on 1 hour, `leadMinutes5m` on 5 minutes; `--lead` overrides). A separate **lead
+   fit** (`lead_fit`) reruns your rule at every lead in a grid — 0.5/1/2/3/5 min on the hour, 0.5/1/1.5/2/2.5 on
+   five minutes (the mod caps the lead at half the TTL) — and says *change* when the best lead beats yours by
+   ≥ 1 point of idle-gap cost with a session-clustered paired 90% interval above zero. The model has no cost for
+   acting late (a request that lands after expiry re-writes everything, and request latency is not in the
+   history), so the fit always favours the shortest lead the grid allows: the 30-second floor is a judgment — the
+   time a ping or compaction request needs to reach the server, with margin — and what the fit measures is how
+   much acting later is worth. The mod logs each ping's round trip (`/cache-clock`); a slowest ping near the lead,
+   or a ping marked MISSED, means raise it. Found 2026-10-08 on a 5-minute history: acting at 2:30 instead of
+   4:30 pinged and compacted for people who were about to return, 24% vs 43% of idle-gap cost.
 2. **TTL.** Each Claude Code session's TTL comes from which cache-write field it uses. The dominant TTL is analysed;
    sessions on the other one are excluded and counted; `--ttl` forces one. *Validation:* a "miss" is the next
    request reading under half of the previous context from cache. Misses should be rare before the TTL and
@@ -121,7 +128,7 @@ tool. No prompt text, paths or project names reach the analysis.
 | summary output | 0.5 × median `postTokens` (no summary length in events; one live measurement, ~10 transcripts); 7k default | ×2 |
 | ping cost | 0.1×C + 60 output tokens; a fork may inherit thinking settings (unmeasured) | 200 tokens |
 | shared prefix W | median cache read on cold misses | W = 0 |
-| lead | an input; late pings (slow requests) are not priced | lead 2 and 5 |
+| lead | your setting; fitted over a grid with a 30 s floor; late requests are not priced | the lead-fit table |
 | never came back | CLI still open, so the mod acts | cost nothing |
 | mid-turn | inferred from turn ends and prompts; compaction refused → pings. A transcript check that pairs each walk-away tool_use with its tool_result agreed on 471 of 476 stretches and moved the current rule from 71.3% to 70.8% (skeptic re-check, before manual-/compact pricing) | mid-turn ignored |
 | manual /compact return | priced as your own compaction | priced as an ordinary request |

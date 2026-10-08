@@ -13,6 +13,8 @@ export type LedgerEntry = {
   input?: number
   output?: number
   after?: number
+  /** a ping's round trip, request sent to answer, in ms */
+  ms?: number
   note?: string
 }
 

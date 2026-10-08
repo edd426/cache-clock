@@ -42,8 +42,11 @@ behaviour by default but always counted).
 Each view gives a **verdict** against the rule the user runs now (their cache-clock settings, else the mod
 defaults; the report says which): **keep** unless a session-clustered paired bootstrap shows the best rule's
 gain above zero with a median of at least 1 point, in which case **change**. On "keep", the best rule is shown
-as an equivalent alternative, not a recommendation. Settings are exact cache-clock keys (`ttl`, `leadMinutes`,
-`keepAliveBelowTokens`, `maxKeepAlives`, `compactAboveTokens`); the lead is an input (`--lead`), never fitted.
+as an equivalent alternative, not a recommendation. Settings are exact cache-clock keys (`ttl`, `leadMinutes` / `leadMinutes5m`,
+`keepAliveBelowTokens`, `maxKeepAlives`, `compactAboveTokens`). **How late to act** is a separate verdict: the
+same rule at every lead from 30 s up. It always prefers acting later, because a request that lands after expiry
+is not priced — so report the size of the gain, keep the 30 s floor, and tell the user to check the ping round
+trip and MISSED pings in `/cache-clock` after a few days. On a 5-minute TTL this is often the biggest lever.
 
 - **Claude Code** — fitted to Claude Code idle stretches. The primary answer.
 - **Out of what** — the headline saving is a share of the *idle-gap cost* only (what returning to an expired

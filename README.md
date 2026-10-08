@@ -38,7 +38,7 @@ key, Bedrock, Vertex or Foundry, unless `promptCacheTtl` says otherwise). The mo
 by itself: Claude Code's own settings and environment first (`promptCacheTtl`, the TTL variables, Bedrock,
 Vertex or Foundry), then how the cache behaves — two returns within the hour that miss mean 5 minutes, one that
 hits means an hour. `/cache-clock` says which it found. An API key in use is not visible to a mod, so on one
-the clock assumes an hour until two returns have missed; set `ttl` to `5m` to skip that. Three minutes before it expires (2.5 minutes on a 5-minute TTL), with nobody typing, the mod
+the clock assumes an hour until two returns have missed; set `ttl` to `5m` to skip that. Three minutes before it expires (30 seconds on a 5-minute TTL), with nobody typing, the mod
 looks at the context size:
 
 | Context | Action |
@@ -67,8 +67,11 @@ tokens, switch the mod for that session (it lasts until the session ends and sur
 The status line ends in `· off` or `· pings only` while a session is switched. To turn it off everywhere, set
 `autoAct` to false in the settings.
 
-Settings (`/plugin` → cache-clock → configure): `ttl` (`auto` by default; `1h` or `5m` to pin it), `autoAct` (off = countdown and a warning only),
-`leadMinutes`, `keepAliveBelowTokens`, `maxKeepAlives`, `compactAboveTokens`.
+Settings (`/plugin` → cache-clock → configure): `ttl` (`auto` by default; `1h` or `5m` to pin it), `autoAct`
+(off = countdown and a warning only), `leadMinutes` (minutes before expiry to act on a 1-hour cache, default 3),
+`leadMinutes5m` (the same on a 5-minute cache, default 0.5 — at 4:30 of quiet), `keepAliveBelowTokens`,
+`maxKeepAlives`, `compactAboveTokens`. `/cache-clock` shows each ping's round trip: if the slowest comes close to
+the lead, or a ping shows MISSED, raise the lead.
 
 ## Fit the thresholds to yourself: the cache-policy-study skill
 
@@ -99,19 +102,20 @@ cache-clock layered on the interactive conversations. On the author's history:
 
 | Traffic | Now | 1h vs 5m | Verdict |
 |---|---|---:|---|
-| interactive conversations (with cache-clock on both) | 1h | **−13%** (90% −15% to −10%) | keep 1 hour |
+| interactive conversations (with cache-clock on both) | 1h | **−7.9%** (90% −9.9% to −5.8%) | keep 1 hour |
 | interactive conversations, no mod | 1h | −32% (90% −35% to −27%) | keep 1 hour |
 | scripted runs (`claude -p`, SDK) | 1h | **+7.9%** (90% +6.7% to +9.1%) | 5 minutes: requests come seconds apart, so the hour buys nothing |
-| subagents | 5m | −2.7% (90% −9.2% to +5.6%) | either; the sign flips with how much context survives |
+| subagents | 5m | −2.7% (90% −9.3% to +6.0%) | either; the sign flips with how much context survives |
 
 Costs use API list-price ratios (1-hour write 2×); whether a subscription's usage meter weighs them the same way
 is not established. A model check runs the formulas blind at the TTL the history actually used: here they land
 within 0.3–2.0% of the observed cost.
 
-On a 5-minute TTL the mod still saves a lot (27% of interactive cost on this history), but most of that comes
-from compacting a large conversation after about 2.5 quiet minutes. If your plan lets you set
-`"promptCacheTtl": "1h"`, that was the cheaper fix on this history. If it doesn't, `/cache-clock pings` keeps the
-conversation whole at a smaller saving (7.2% here).
+On a 5-minute TTL the mod still saves 31% of interactive cost on this history, acting 30 seconds before expiry.
+Acting at 2:30 instead — the old default — pinged and compacted for people who were about to come back; on a
+5-minute work history that halved the saving (24% vs 43% of idle-gap cost). Large conversations are still
+compacted after 4.5 quiet minutes, which loses detail; `/cache-clock pings` keeps them whole and saves 17% here.
+If your plan lets you set `"promptCacheTtl": "1h"`, that was the cheaper fix on this history.
 
 ## How much it saves — and out of what
 

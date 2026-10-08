@@ -57,7 +57,7 @@ const ctxOf = (u: ModelUsage) => u.input_tokens + u.cache_read_input_tokens + u.
 // `turns` holds the main-thread turns in flight: between a turn's model steps (a long tool run, a
 // permission wait) the engine refuses a compaction, so the mod pings instead and decides again next deadline.
 type Ttl = keyof typeof TTL_MS
-type Clock = Policy & { ttl: Ttl; ttlSource: string; ttlFixed: boolean; misses: number; resumedAt?: number; ttlMs: number; leadMs: number; leadMinutes: number; autoAct: boolean; isLive: boolean; busy: number; acting: boolean; actedFor: number; turns: Set<string> }
+type Clock = Policy & { ttl: Ttl; ttlSource: string; ttlFixed: boolean; misses: number; resumedAt?: number; ttlMs: number; leadMs: number; leadMinutes: number; leadMinutes5m: number; autoAct: boolean; isLive: boolean; busy: number; acting: boolean; actedFor: number; turns: Set<string> }
 
 async function record($: EngineInterface, entry: LedgerEntry) {
   const prev = ((await $.store.get(LEDGER)) as LedgerEntry[] | undefined) ?? []
@@ -67,13 +67,14 @@ async function record($: EngineInterface, entry: LedgerEntry) {
 async function ping($: EngineInterface, ctx: number, w: Warmth | null, why?: string) {
   const now = await $.clock.now()
   const r = await $.model.fork({ prompt: PING_PROMPT })
+  const ms = (await $.clock.now()) - now
   const u = 'usage' in r ? r.usage : undefined
   // A ping that read under half the context did not find the entry: it lapsed.
   const ok = r.isAnswered && u !== undefined && u.cache_read_input_tokens >= ctx * 0.5
   await record($, {
     at: now, kind: 'ping', ctx, ok,
     read: u?.cache_read_input_tokens, written: u?.cache_creation_input_tokens, input: u?.input_tokens, output: u?.output_tokens,
-    note: r.isAnswered ? why : r.reason,
+    ms, note: r.isAnswered ? why : r.reason,
   })
   if (ok) await update($, warm, () => ({ at: now, pings: (w?.pings ?? 0) + 1 }))
   else $.ui.toast(`cache-clock: keep-alive missed the cache (${r.isAnswered ? `read ${k(u?.cache_read_input_tokens ?? 0)} of ${k(ctx)}` : r.reason})`)
@@ -163,8 +164,13 @@ const setTtl = (c: Clock, ttl: Ttl, source: string) => {
   c.ttl = ttl
   c.ttlSource = source
   c.ttlMs = TTL_MS[ttl]
-  c.leadMs = Math.min(c.leadMinutes * 60 * 1000, c.ttlMs / 2)
+  c.leadMs = leadMsFor(c, ttl)
 }
+
+// Each TTL has its own lead: three minutes is a small slice of an hour, but more than half of five minutes, where
+// acting at 2:30 pings or compacts for people who were about to come back anyway (30 s still lets a request land).
+const leadMsFor = (c: Pick<Clock, 'leadMinutes' | 'leadMinutes5m'>, ttl: Ttl) =>
+  Math.min((ttl === '5m' ? c.leadMinutes5m : c.leadMinutes) * 60 * 1000, TTL_MS[ttl] / 2)
 
 const isTtl = (v: unknown): v is Ttl => v === '5m' || v === '1h'
 const truthy = (v: unknown) => v !== undefined && v !== null && v !== '' && v !== '0' && v !== 'false' && v !== false
@@ -208,6 +214,12 @@ const MODE_TEXT: Record<Mode, string> = {
   off: 'off: no pings, no compactions; a warning before the cache lapses',
 }
 
+// The slowest ping says how much of the lead a request needs: a ping that took most of it, or missed, means act earlier.
+const pingTimes = (pings: LedgerEntry[]) => {
+  const ms = pings.map(e => e.ms).filter((x): x is number => x !== undefined).sort((a, b) => a - b)
+  return ms.length ? [`  ping round trip: median ${(ms[Math.floor(ms.length / 2)]! / 1000).toFixed(1)} s, slowest ${(ms[ms.length - 1]! / 1000).toFixed(1)} s`] : []
+}
+
 export const summarize = (entries: LedgerEntry[], p: Policy & { leadMinutes: number; leadMs?: number; ttl: string; ttlSource?: string }, m: Mode = 'auto') => {
   const pings = entries.filter(e => e.kind === 'ping')
   const compacts = entries.filter(e => e.kind === 'compact' && e.ok)
@@ -220,6 +232,7 @@ export const summarize = (entries: LedgerEntry[], p: Policy & { leadMinutes: num
     `  ≥ ${k(p.compactAbove)}: compact at the first deadline`,
     '',
     `Keep-alive pings: ${pings.length} (${pings.filter(e => e.ok).length} hit the cache), ${k(pings.reduce((s, e) => s + (e.read ?? 0), 0))} read in total`,
+    ...pingTimes(pings),
     `Deadlines slept through (no action possible): ${entries.filter(e => e.kind === 'missed').length}`,
     `Auto-compactions: ${compacts.length}` + (compacts.length ? `, ${k(compacts.reduce((s, e) => s + e.ctx, 0))} → ${k(compacts.reduce((s, e) => s + (e.after ?? 0), 0))}, compaction read ${k(compacts.reduce((s, e) => s + (e.read ?? 0), 0))} cached / ${k(compacts.reduce((s, e) => s + (e.input ?? 0), 0))} uncached` : ''),
   ]
@@ -246,6 +259,7 @@ export const register: Register = (on, options) => {
   const ttl: Ttl = fixedTtl ?? '1h'
   const ttlMs = TTL_MS[ttl]
   const leadMinutes = Number(options.leadMinutes ?? 3)
+  const leadMinutes5m = Number(options.leadMinutes5m ?? 0.5)
   const clock: Clock = {
     ttl,
     ttlSource: fixedTtl ? 'cache-clock ttl setting' : 'assumed (subscription default) until a return shows otherwise',
@@ -253,7 +267,8 @@ export const register: Register = (on, options) => {
     misses: 0,
     ttlMs,
     leadMinutes,
-    leadMs: Math.min(leadMinutes * 60 * 1000, ttlMs / 2),
+    leadMinutes5m,
+    leadMs: leadMsFor({ leadMinutes, leadMinutes5m }, ttl),
     autoAct: options.autoAct !== false,
     keepAliveBelow: Number(options.keepAliveBelowTokens ?? 125000),
     maxKeepAlives: Number(options.maxKeepAlives ?? 3),
