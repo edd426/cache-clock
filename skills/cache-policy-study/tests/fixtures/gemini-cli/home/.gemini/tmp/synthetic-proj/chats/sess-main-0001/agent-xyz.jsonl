@@ -1,0 +1,2 @@
+{"sessionId":"agent-xyz","projectHash":"0","startTime":"2026-09-01T10:00:06.000Z","lastUpdated":"2026-09-01T10:00:08.000Z","kind":"subagent"}
+{"id":"s1","timestamp":"2026-09-01T10:00:07.000Z","type":"gemini","content":"synthetic","tokens":{"input":10,"output":1,"cached":0}}

@@ -1,0 +1,3 @@
+[{"sessionId":"sess-main-0001","messageId":0,"timestamp":"2026-09-01T10:00:05.000Z","type":"user","message":"synthetic"},
+ {"sessionId":"sess-logonly-0003","messageId":0,"timestamp":"2026-07-15T08:00:00.000Z","type":"user","message":"synthetic"},
+ {"sessionId":"sess-logonly-0003","messageId":1,"timestamp":"2026-07-15T08:10:00.000Z","type":"user","message":"/quit"}]

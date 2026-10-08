@@ -1,0 +1,10 @@
+{
+ "_note": "Cost multipliers relative to the BASE (uncached) input-token price, so every cost is in input-token equivalents. Edit freely: analyze.py --pricing FILE reads this shape. Source: Anthropic prompt-caching price sheet as of 2026-10 (cache read 0.1x, 5-minute cache write 1.25x, 1-hour cache write 2x, output 5x input for the Opus/Sonnet/Haiku families). The ratios, not the dollar prices, decide the policy, and they are the same across those families.",
+ "cache_read": 0.1,
+ "cache_write_5m": 1.25,
+ "cache_write_1h": 2.0,
+ "output": 5.0,
+ "input": 1.0,
+ "ping_output_tokens": 60,
+ "_ping_note": "Output tokens a keep-alive ping costs (the mod asks for a one-word reply; 60 covers a short answer plus overhead). Sensitivity runs 200."
+}

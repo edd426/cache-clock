@@ -1,0 +1,59 @@
+{
+  "name": "cache-clock",
+  "version": "0.4.0",
+  "description": "Status-line countdown to prompt-cache expiry; keeps small contexts warm and compacts large ones before the cache lapses",
+  "author": {
+    "name": "Evan DeLord"
+  },
+  "homepage": "https://github.com/edd426/cache-clock",
+  "repository": "https://github.com/edd426/cache-clock",
+  "license": "MIT",
+  "keywords": [
+    "prompt-cache",
+    "compaction",
+    "cost"
+  ],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "ttl": {
+      "type": "string",
+      "title": "Prompt-cache TTL",
+      "description": "The cache lifetime to count down from (1h on a subscription by default; 5m in overage or on the API default)",
+      "default": "1h",
+      "options": [
+        "1h",
+        "5m"
+      ]
+    },
+    "autoAct": {
+      "type": "boolean",
+      "title": "Act before the cache lapses",
+      "description": "Off: countdown and a warning toast only",
+      "default": true
+    },
+    "leadMinutes": {
+      "type": "number",
+      "title": "Minutes before expiry to act",
+      "description": "When to ping or compact (study 2026-10-07: 2-5 minutes all within 0.3 points; 3 leaves margin for a slow request)",
+      "default": 3
+    },
+    "keepAliveBelowTokens": {
+      "type": "number",
+      "title": "Keep warm with pings below this context size",
+      "description": "Below this, ping up to the keep-alive limit and then let the cache lapse",
+      "default": 125000
+    },
+    "maxKeepAlives": {
+      "type": "number",
+      "title": "Keep-alive pings per idle stretch (small contexts)",
+      "description": "Each ping buys one more TTL of warmth",
+      "default": 3
+    },
+    "compactAboveTokens": {
+      "type": "number",
+      "title": "Compact at the first deadline above this context size",
+      "description": "Between the keep-alive limit and this, ping once and compact at the second deadline",
+      "default": 300000
+    }
+  }
+}

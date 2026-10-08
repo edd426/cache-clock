@@ -1,0 +1,16 @@
+{
+  "name": "cache-clock",
+  "owner": {
+    "name": "Evan DeLord"
+  },
+  "metadata": {
+    "description": "cache-clock: prompt-cache countdown, keep-alive pings and pre-expiry compaction for Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "cache-clock",
+      "source": "./",
+      "description": "Status-line countdown to prompt-cache expiry; keeps small contexts warm and compacts large ones before the cache lapses"
+    }
+  ]
+}

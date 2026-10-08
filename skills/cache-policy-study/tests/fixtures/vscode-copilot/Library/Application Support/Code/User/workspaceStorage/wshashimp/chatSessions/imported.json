@@ -1,0 +1,19 @@
+{
+ "version": 3,
+ "sessionId": "vs-imp",
+ "isImported": true,
+ "creationDate": 1767348000000,
+ "requests": [
+  {
+   "requestId": "i1",
+   "message": {
+    "text": "placeholder"
+   },
+   "timestamp": 1767348001000,
+   "modelId": "model-w",
+   "modelState": {
+    "value": 0
+   }
+  }
+ ]
+}

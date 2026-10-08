@@ -1,0 +1,11 @@
+{"type": "session.start", "data": {"sessionId": "sess-a", "selectedModel": "model-c", "context": {"cwd": "/placeholder/project-three"}}, "id": "e-session.start-0", "timestamp": "2026-01-02T11:00:00.000Z", "parentId": null}
+{"type": "user.message", "data": {"content": "placeholder ask"}, "id": "e-user.message-5", "timestamp": "2026-01-02T11:00:05.000Z", "parentId": null}
+{"type": "assistant.turn_start", "data": {"turnId": "0"}, "id": "e-assistant.turn_start-6", "timestamp": "2026-01-02T11:00:06.000Z", "parentId": null}
+{"type": "assistant.message", "data": {"messageId": "m1", "model": "model-c", "content": ""}, "id": "e-assistant.message-9", "timestamp": "2026-01-02T11:00:09.000Z", "parentId": null}
+{"type": "assistant.message", "data": {"messageId": "m1", "model": "model-c", "content": ""}, "id": "e-assistant.message-9", "timestamp": "2026-01-02T11:00:09.000Z", "parentId": null}
+{"type": "assistant.usage", "data": {"inputTokens": 999}, "id": "e-assistant.usage-9", "timestamp": "2026-01-02T11:00:09.000Z", "parentId": null, "ephemeral": true}
+{"type": "assistant.message", "data": {"messageId": "m2", "model": "model-c", "content": ""}, "id": "e-assistant.message-12", "timestamp": "2026-01-02T11:00:12.000Z", "parentId": null, "agentId": "agent-1"}
+{"type": "user.message", "data": {"content": "placeholder notice", "source": "system"}, "id": "e-user.message-20", "timestamp": "2026-01-02T11:00:20.000Z", "parentId": null}
+{"type": "assistant.message", "data": {"messageId": "m3", "model": "model-c", "content": ""}, "id": "e-assistant.message-25", "timestamp": "2026-01-02T11:00:25.000Z", "parentId": null}
+{"type": "session.compaction_complete", "data": {"success": true, "preCompactionTokens": 9000, "postCompactionTokens": 1500}, "id": "e-session.compaction_complete-30", "timestamp": "2026-01-02T11:00:30.000Z", "parentId": null}
+{"type": "session.compaction_complete", "data": {"success": false}, "id": "e-session.compaction_complete-31", "timestamp": "2026-01-02T11:00:31.000Z", "parentId": null}

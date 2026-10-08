@@ -1,0 +1,12 @@
+{"sessionId":"sess-main-0001","projectHash":"0000000000000000000000000000000000000000000000000000000000000000","startTime":"2026-09-01T10:00:00.000Z","lastUpdated":"2026-09-01T10:00:00.000Z","kind":"main"}
+{"id":"m1","timestamp":"2026-09-01T10:00:05.000Z","type":"user","content":[{"text":"synthetic prompt one"}]}
+{"id":"m2","timestamp":"2026-09-01T10:00:09.000Z","type":"gemini","content":"","model":"gemini-test-model"}
+{"id":"m2","timestamp":"2026-09-01T10:00:09.000Z","type":"gemini","content":"synthetic reply","model":"gemini-test-model","tokens":{"input":1000,"output":50,"cached":800,"thoughts":20,"tool":0,"total":1070}}
+{"id":"m3","timestamp":"2026-09-01T10:00:10.000Z","type":"info","content":"synthetic info"}
+{"$set":{"lastUpdated":"2026-09-01T10:30:00.000Z"}}
+{"id":"m4","timestamp":"2026-09-01T10:30:00.000Z","type":"user","content":[{"text":"synthetic prompt two"}]}
+{"id":"m5","timestamp":"2026-09-01T10:30:04.000Z","type":"gemini","content":"synthetic reply","model":"gemini-test-model","tokens":{"input":1200,"output":40,"cached":1000,"thoughts":0,"tool":0,"total":1240}}
+{"$rewindTo":"m4"}
+{"id":"m6","timestamp":"2026-09-01T10:31:00.000Z","type":"user","content":[{"text":"synthetic prompt two, edited"}]}
+{"$patch":{"updates":[],"removeIds":["m3"]}}
+not json

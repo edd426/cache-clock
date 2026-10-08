@@ -1,0 +1,9 @@
+{"kind": 0, "v": {"version": 3, "sessionId": "vs-new", "creationDate": 1767348200000, "requests": [], "inputState": {"inputText": ""}}}
+{"kind": 1, "k": ["inputState"], "v": {"inputText": "placeholder draft"}}
+{"kind": 2, "k": ["requests"], "v": [{"requestId": "n1", "message": {"text": "placeholder"}, "timestamp": 1767348210000, "modelId": "model-w", "modelState": {"value": 0}}]}
+{"kind": 1, "k": ["requests", 0, "modelState"], "v": {"value": 1, "completedAt": 1767348230000}}
+{"kind": 2, "k": ["requests"], "v": [{"requestId": "n2", "message": {"text": "placeholder"}, "timestamp": 1767348300000, "modelId": "model-w", "modelState": {"value": 0}, "isSystemInitiated": true}, {"requestId": "n3", "message": {"text": "placeholder"}, "timestamp": 1767348400000, "modelId": "model-w", "modelState": {"value": 0}}]}
+{"kind": 1, "k": ["requests", 1, "modelState"], "v": {"value": 3, "completedAt": 1767348305000}}
+{"kind": 2, "k": ["requests"], "i": 2}
+{"kind": 2, "k": ["requests"], "v": [{"requestId": "n4", "message": {"text": "placeholder"}, "timestamp": 1767348500000, "modelId": "model-w", "modelState": {"value": 2, "completedAt": 1767348999000}}]}
+{"kind": 3, "k": ["inputState"]}

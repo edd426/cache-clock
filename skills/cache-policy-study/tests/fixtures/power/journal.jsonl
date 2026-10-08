@@ -1,0 +1,5 @@
+{"__REALTIME_TIMESTAMP":"1790000000000000","_COMM":"systemd-sleep","MESSAGE_ID":"6bbd95ee977941e497c48be27c254128","SLEEP":"suspend","MESSAGE":"Entering sleep state 'suspend'..."}
+{"__REALTIME_TIMESTAMP":"1790003600000000","_COMM":"systemd-sleep","MESSAGE_ID":"8811e6df2a8e40f58a94cea26f8ebf14","SLEEP":"suspend","MESSAGE":"System returned from sleep operation 'suspend'."}
+{"__REALTIME_TIMESTAMP":"1790010000000000","_COMM":"systemd-sleep","MESSAGE":"Suspending system..."}
+{"__REALTIME_TIMESTAMP":"1790012000000000","_COMM":"systemd-sleep","MESSAGE":"System resumed."}
+not json

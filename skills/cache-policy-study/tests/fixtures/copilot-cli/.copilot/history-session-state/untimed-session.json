@@ -1,0 +1,10 @@
+{
+ "sessionId": "legacy-2",
+ "startTime": "2026-01-02T11:03:20.000Z",
+ "messages": [
+  {
+   "role": "user",
+   "content": "placeholder"
+  }
+ ]
+}

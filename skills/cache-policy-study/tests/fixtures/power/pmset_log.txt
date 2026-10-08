@@ -1,0 +1,8 @@
+PM ASL data store: /var/log/powermanagement
+2026-09-21 16:33:30 +0200 Assertions          	PID 1(test) Created SystemIsActive "test" 00:00:00  id:0x0x1 [System: PrevIdle]
+2026-09-21 18:00:00 +0200 Sleep               	Entering Sleep state due to 'Clamshell Sleep':TCPKeepAlive=active Using Batt (Charge:100%) 116 secs  
+2026-09-21 18:00:03 +0200 Wake Requests       	[process=test request=Maintenance deltaSecs=7197 wakeAt=2026-09-21 20:00:00 info="upkeep wake"]
+2026-09-21 18:30:00 +0200 DarkWake            	DarkWake from Deep Idle [CDNP] : due to smc.sysState.Wake(0x70070000) wifibt/ Using BATT (Charge:100%) 11 secs   
+2026-09-21 18:30:11 +0200 Sleep               	Entering Sleep state due to 'Maintenance Sleep':TCPKeepAlive=active Using Batt (Charge:100%) 467 secs  
+2026-09-21 19:00:00 +0200 Wake                	DarkWake to FullWake from Deep Idle [CDNVAP] : due to Notification Using AC (Charge:100%)           
+2026-09-21 19:00:01 +0200 WakeDetails         	DriverReason:smc.sysState.Wake - DriverDetails:

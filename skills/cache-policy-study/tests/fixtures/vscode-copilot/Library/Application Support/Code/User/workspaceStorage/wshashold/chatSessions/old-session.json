@@ -1,0 +1,37 @@
+{
+ "version": 3,
+ "sessionId": "vs-old",
+ "creationDate": 1767348000000,
+ "lastMessageDate": 1767348100000,
+ "requests": [
+  {
+   "requestId": "q1",
+   "message": {
+    "text": "placeholder question"
+   },
+   "timestamp": 1767348005000,
+   "modelId": "model-v",
+   "result": {
+    "timings": {
+     "firstProgress": 500,
+     "totalElapsed": 4000
+    }
+   },
+   "response": []
+  },
+  {
+   "requestId": "q2",
+   "message": {
+    "text": "placeholder question two"
+   },
+   "timestamp": 1767348060000,
+   "modelId": "model-v",
+   "isCanceled": true,
+   "result": {
+    "timings": {
+     "totalElapsed": 1000
+    }
+   }
+  }
+ ]
+}
