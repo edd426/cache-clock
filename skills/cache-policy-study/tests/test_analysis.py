@@ -368,6 +368,44 @@ class SleepMask(unittest.TestCase):
             self.assertEqual(s["with_darkwake"]["affected"], 2)
 
 
+class SpendLadder(unittest.TestCase):
+    def test_shares_and_factors(self):
+        z = dict.fromkeys(("cache_read", "cache_write_5m", "cache_write_1h", "cache_write_other"), 0)
+        def row(tool, cls, inp, day="2026-01-10", with_usage=1):
+            return {"tool": tool, "class": cls, "day": day, "responses": 1, "with_usage": with_usage,
+                    "input": inp, "output": 0, **z}
+        rows = [row("claude-code", "main", 1000), row("claude-code", "subagent", 1000),
+                row("claude-code", "headless", 2000), row("codex", "main", 1000),
+                row("claude-code", "main", 9999, day="2025-12-31"),                # outside the window
+                row("cursor", "main", 0, with_usage=0)]                           # no token counts
+        pricing = {"input": 1.0, "output": 5.0, "cache_read": 0.1, "cache_write_5m": 1.25, "cache_write_1h": 2.0}
+        sp = analyze.spend_ladder(rows, True, ("2026-01-01", "2026-01-31"), pricing, {"codex": {"input": 0.5}}, "1h",
+                                  base=200.0, rec={"saving": 0.5, "interval": [0.4, 0.6]})
+        st = sp["steps"]
+        self.assertEqual([s["denominator"] for s in st], [200.0, 1000.0, 2000.0, 4000.0, 4500.0])
+        self.assertEqual(sp["saved"], 100.0)
+        self.assertAlmostEqual(st[1]["saving_share"], 0.1)
+        self.assertAlmostEqual(st[4]["saving_share"], 100 / 4500)
+        self.assertAlmostEqual(st[2]["factor"], 0.5)
+        self.assertAlmostEqual(st[1]["interval"][0], 0.08)          # 40% of the gap × 200 / 1000
+        for prev, cur in zip(st, st[1:]):                           # share = previous share × factor
+            self.assertAlmostEqual(cur["saving_share"], prev["saving_share"] * cur["factor"])
+        self.assertEqual(sp["uncounted_tools"], ["cursor"])
+
+    def test_without_spend_json_only_the_main_thread(self):
+        g = Gen()
+        t = 1.8e9
+        for i in range(12):
+            g.walk(f"s{i}", t + i * 8 * H, 400_000, 2 * H)
+        tmp, d, r = run_analysis(g)
+        with tmp:
+            st = r["spend"]["steps"]
+            self.assertTrue(st[1]["collected"])
+            self.assertFalse(any(s["collected"] for s in st[2:]))
+            self.assertIn("no spend.json", " ".join(r["warnings"]))
+            self.assertIn("of your interactive Claude Code main-thread spend", r["summary_lines"][0])
+
+
 class ReportSmoke(unittest.TestCase):
     def test_files_and_no_identifiers(self):
         g = Gen()

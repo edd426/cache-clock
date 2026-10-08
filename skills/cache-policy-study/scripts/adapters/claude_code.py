@@ -5,8 +5,9 @@ responses are deduplicated on message.id, timed at their first row (closest to t
 when the cache entry is read or written). `turn_duration` system rows become `turn_end`. Compaction-summary
 rows are not prompts; cross-session and teammate messages (stored as meta rows) are `auto_prompt`; typed slash
 commands are `prompt`; when a row has `promptSource`, `system` means `auto_prompt` and typed/queued/
-suggestion_accepted mean `prompt` (verified 2026-10-07: scheduled-task rows are meta rows with plain text). Subagent transcripts live in <session>/subagents/ and are skipped:
-they carry their own cache prefixes.
+suggestion_accepted mean `prompt` (verified 2026-10-07: scheduled-task rows are meta rows with plain text). Subagent transcripts
+live in <session>/subagents/: only their responses are read (subagent=True), for the spend ledger — they carry their
+own cache prefixes and feed no behaviour.
 """
 from __future__ import annotations
 
@@ -79,6 +80,16 @@ def _row_kind(r) -> Optional[str]:
     return _prompt_kind(content, bool(r.get("isMeta")))
 
 
+def _response(sid: str, t: float, msg: Dict, interactive: Optional[bool], proj: Optional[str], sub: bool) -> Dict:
+    u = msg["usage"]
+    cc = u.get("cache_creation") or {}
+    i, o = u.get("input_tokens") or 0, u.get("output_tokens") or 0
+    cr, cw = u.get("cache_read_input_tokens") or 0, u.get("cache_creation_input_tokens") or 0
+    return event(TOOL, sid, t, "response", interactive=interactive, project=proj, model=msg.get("model"),
+                 subagent=sub, usage=usage(i, o, cr, cw, cc.get("ephemeral_5m_input_tokens"),
+                                           cc.get("ephemeral_1h_input_tokens"), i + cr + cw + o))
+
+
 def collect(env: Env, since, until, cov: Coverage) -> Iterator[Dict]:
     for root in roots(env):
         cov.roots_checked.append(env.placeholder(root))
@@ -106,12 +117,7 @@ def collect(env: Env, since, until, cov: Coverage) -> Iterator[Dict]:
                     if not u or not mid or msg.get("model") == "<synthetic>" or (sid, mid) in seen:
                         continue
                     seen.add((sid, mid))
-                    cc = u.get("cache_creation") or {}
-                    i, o = u.get("input_tokens") or 0, u.get("output_tokens") or 0
-                    cr, cw = u.get("cache_read_input_tokens") or 0, u.get("cache_creation_input_tokens") or 0
-                    yield event(TOOL, sid, t, "response", interactive=interactive, project=proj, model=msg.get("model"),
-                                subagent=sub, usage=usage(i, o, cr, cw, cc.get("ephemeral_5m_input_tokens"),
-                                                          cc.get("ephemeral_1h_input_tokens"), i + cr + cw + o))
+                    yield _response(sid, t, msg, interactive, proj, sub)
                 elif typ == "user" and not sub and not r.get("isCompactSummary"):
                     kind = _row_kind(r)
                     if kind:
@@ -122,6 +128,23 @@ def collect(env: Env, since, until, cov: Coverage) -> Iterator[Dict]:
                     m = r.get("compactMetadata") or {}
                     yield event(TOOL, sid, t, "compaction", interactive=interactive, project=proj,
                                 compaction={"pre": m.get("preTokens"), "post": m.get("postTokens"), "trigger": m.get("trigger")})
-        n_sub = sum(1 for _ in root.glob("*/*/subagents/*.jsonl"))
+        n_sub = 0
+        for path in sorted(root.glob("*/*/subagents/*.jsonl")):
+            n_sub += 1
+            entry = None
+            for r in iter_jsonl(path, cov):
+                if r.get("entrypoint") and entry is None:
+                    entry = r["entrypoint"]
+                if r.get("type") != "assistant":
+                    continue
+                sid, t = r.get("sessionId"), parse_time(r.get("timestamp"))
+                msg = r.get("message") or {}
+                u, mid = msg.get("usage"), msg.get("id")
+                if (not sid or t is None or not in_window(t, since, until) or not u or not mid
+                        or msg.get("model") == "<synthetic>" or (sid, mid) in seen):
+                    continue
+                seen.add((sid, mid))
+                yield _response(sid, t, msg, None if entry is None else not str(entry).startswith("sdk"),
+                                project_id(r.get("cwd")), True)
         if n_sub:
-            cov.note(f"{n_sub} subagent transcripts skipped (own cache prefixes; not part of the main timeline)")
+            cov.note(f"{n_sub} subagent transcripts read for spend only (own cache prefixes; not part of the main timeline)")

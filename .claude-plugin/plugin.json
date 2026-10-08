@@ -1,13 +1,13 @@
 {
   "name": "cache-clock",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Status-line countdown to prompt-cache expiry; keeps small contexts warm and compacts large ones before the cache lapses",
   "author": {
     "name": "Evan DeLord"
   },
   "homepage": "https://github.com/edd426/cache-clock",
   "repository": "https://github.com/edd426/cache-clock",
-  "license": "MIT",
+  "license": "MIT OR Apache-2.0",
   "keywords": [
     "prompt-cache",
     "compaction",

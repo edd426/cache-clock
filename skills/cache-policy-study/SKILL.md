@@ -17,8 +17,8 @@ python3 "$SKILL/scripts/study.py" --out "./cache-policy-study-$(date +%F)"
 
 Windows (PowerShell): `python "$env:SKILL\scripts\study.py" --out ".\cache-policy-study-$(Get-Date -Format yyyy-MM-dd)"`.
 
-It runs three steps, each runnable alone: `collect.py` (history stores → `events.jsonl`, `coverage.json`,
-`sleep.json`), `analyze.py --run DIR` (→ `results.json`), `report.py --run DIR` (→ `report.html`,
+It runs three steps, each runnable alone: `collect.py` (history stores → `events.jsonl`, `spend.json`,
+`coverage.json`, `sleep.json`), `analyze.py --run DIR` (→ `results.json`), `report.py --run DIR` (→ `report.html`,
 `summary.md`, `photo.html`). Python 3.9+, standard library only. Useful `collect.py` flags: `--only
 claude-code,codex`, `--since 2026-06-01`, `--include-headless` (keep scripted runs; they are excluded from
 behaviour by default but always counted).
@@ -44,6 +44,12 @@ as an equivalent alternative, not a recommendation. Settings are exact cache-clo
 `keepAliveBelowTokens`, `maxKeepAlives`, `compactAboveTokens`); the lead is an input (`--lead`), never fitted.
 
 - **Claude Code** — fitted to Claude Code idle stretches. The primary answer.
+- **Out of what** — the headline saving is a share of the *idle-gap cost* only (what returning to an expired
+  cache costs with no mod). Never quote it alone: the report divides the same saving by ever-wider totals —
+  interactive Claude Code main thread, + subagents, + scripted runs, + every other AI tool with token counts —
+  and shows the factor between each step (share = headline × gap cost ÷ that total). Quote the headline and
+  the widest share together, e.g. "69% of idle-gap cost = 2.4% of all AI-tool spend". Tools whose stores keep
+  no token counts are listed as left out, which makes the widest share an upper bound.
 - **Fallback: global (x% Claude Code, y% other tools)** — return times pooled across every AI tool, applied
   to Claude Code's context sizes. Use it only when Claude Code history is thin; it is mostly the same data,
   not independent evidence, so never present the two headlines as two confirmations. The presence section

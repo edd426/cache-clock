@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, ModelUsage, Register } from 'claude-code'
 
-import type { CacheTouch, Compaction, LedgerEntry, Warmth } from '../types'
+import type { CacheTouch, Compaction, LedgerEntry, Mode, Warmth } from '../types'
 
 // Every main-thread request re-reads (and so refreshes) or re-writes the cached
 // prefix, so the clock restarts on each one. Subagent requests carry their own
@@ -10,6 +10,8 @@ import type { CacheTouch, Compaction, LedgerEntry, Warmth } from '../types'
 const last = atom({ plugin: 'cache-clock', key: 'last' } as const, null)
 const compacted = atom({ plugin: 'cache-clock', key: 'compacted' } as const, null)
 const warm = atom({ plugin: 'cache-clock', key: 'warm' } as const, null)
+// Kept in session state, not a module variable, so a plugin reload cannot quietly switch it back on.
+const mode = atom({ plugin: 'cache-clock', key: 'mode' } as const, null)
 
 const TTL_MS = { '1h': 60 * 60 * 1000, '5m': 5 * 60 * 1000 } as const
 const LEDGER = 'ledger'
@@ -34,7 +36,12 @@ export const decide = (ctx: number, pingsDone: number, p: Policy): Action => {
   return pingsDone < p.maxKeepAlives ? 'ping' : 'lapse'
 }
 
-export const line = (touch: CacheTouch | null, w: Warmth | null, done: Compaction | null, now: number, ttlMs: number, isBusy: boolean, contextTokens?: number) => {
+const MODE_TAG: Record<Mode, string> = { auto: '', pings: ' · pings only', off: ' · off' }
+
+export const line = (touch: CacheTouch | null, w: Warmth | null, done: Compaction | null, now: number, ttlMs: number, isBusy: boolean, contextTokens?: number, m: Mode = 'auto') =>
+  bare(touch, w, done, now, ttlMs, isBusy, contextTokens) + MODE_TAG[m]
+
+const bare = (touch: CacheTouch | null, w: Warmth | null, done: Compaction | null, now: number, ttlMs: number, isBusy: boolean, contextTokens?: number) => {
   if (isBusy) return 'cache ● live'
   if (touch === null) {
     if (done) return `cache ○ ${done.isAuto ? 'auto-' : ''}compacted ${k(done.before)}→${k(done.after)} · next prompt writes ~${k(done.after)}`
@@ -95,10 +102,11 @@ async function compactNow($: EngineInterface, ctx: number) {
   }
 }
 
-async function act($: EngineInterface, c: Clock, touch: CacheTouch, w: Warmth | null) {
+async function act($: EngineInterface, c: Clock, touch: CacheTouch, w: Warmth | null, m: Mode) {
   const ctx = (await $.session.usage()).context.tokens ?? touch.ctx
   const pings = w?.pings ?? 0
-  const planned = decide(ctx, pings, c)
+  // pings only: never summarise the conversation, whatever its size.
+  const planned = decide(ctx, pings, m === 'pings' ? { ...c, keepAliveBelow: Infinity, compactAbove: Infinity } : c)
   // Mid-turn the compaction is refused: ping instead, counting toward the same keep-alive cap, so a turn
   // stuck on an unanswered permission prompt does not keep the cache warm forever.
   const action = planned === 'compact' && c.turns.size > 0 ? (pings < c.maxKeepAlives ? 'ping' : 'lapse') : planned
@@ -122,35 +130,46 @@ async function act($: EngineInterface, c: Clock, touch: CacheTouch, w: Warmth | 
 
 async function paint($: EngineInterface, c: Clock) {
   if (c.acting || !c.isLive) return
-  const [touch, w, done, now] = await Promise.all([read($, last), read($, warm), read($, compacted), $.clock.now()])
+  const [touch, w, done, now, chosen] = await Promise.all([read($, last), read($, warm), read($, compacted), $.clock.now(), read($, mode)])
+  const m = modeOf(c, chosen)
   const isBusy = c.busy > 0
   const expiresAt = touch ? (w?.at ?? touch.at) + c.ttlMs : 0
   const left = expiresAt - now
   const tokens = touch && !isBusy && left <= 0 ? (await $.session.usage()).context.tokens : undefined
-  $.ui.status(line(touch, w, done, now, c.ttlMs, isBusy, tokens))
+  $.ui.status(line(touch, w, done, now, c.ttlMs, isBusy, tokens, m))
 
   // Act once per deadline, only while the entry is still warm. A laptop that
   // slept through the deadline wakes to an expired cache: nothing left to save,
   // so the stretch is only logged, to show how often sleep costs a re-write.
-  if (touch && !isBusy && left <= 0 && c.autoAct && c.actedFor !== expiresAt) {
+  if (touch && !isBusy && left <= 0 && m !== 'off' && c.actedFor !== expiresAt) {
     c.actedFor = expiresAt
     await record($, { at: now, kind: 'missed', ctx: touch.ctx, ok: false, note: `deadline passed ${fmt(-left)} ago unattended (asleep?)` })
     return
   }
   if (!touch || isBusy || left <= 0 || left > c.leadMs || c.actedFor === expiresAt) return
   c.actedFor = expiresAt
-  if (c.autoAct) {
-    await act($, c, touch, w)
+  if (m !== 'off') {
+    await act($, c, touch, w, m)
     await paint($, c)
   } else {
     $.ui.toast(`Prompt cache lapses in ${fmt(left)} — send something to keep it warm`)
   }
 }
 
-export const summarize = (entries: LedgerEntry[], p: Policy & { leadMinutes: number; ttl: string }) => {
+const modeOf = (c: Clock, chosen: Mode | null): Mode => chosen ?? (c.autoAct ? 'auto' : 'off')
+
+const MODE_TEXT: Record<Mode, string> = {
+  auto: 'on: pings and compactions follow the policy below',
+  pings: 'pings only: keeps the cache warm, never compacts, so the conversation is never summarised',
+  off: 'off: no pings, no compactions; a warning before the cache lapses',
+}
+
+export const summarize = (entries: LedgerEntry[], p: Policy & { leadMinutes: number; ttl: string }, m: Mode = 'auto') => {
   const pings = entries.filter(e => e.kind === 'ping')
   const compacts = entries.filter(e => e.kind === 'compact' && e.ok)
   const lines = [
+    `This session: ${MODE_TEXT[m]}. Change it with /cache-clock on | pings | off.`,
+    '',
     `Policy (TTL ${p.ttl}, acting ${p.leadMinutes} min before expiry):`,
     `  context < ${k(p.keepAliveBelow)}: up to ${p.maxKeepAlives} keep-alive pings, then let it lapse`,
     `  ${k(p.keepAliveBelow)}–${k(p.compactAbove)}: 1 keep-alive ping, then compact at the next deadline`,
@@ -201,15 +220,24 @@ export const register: Register = (on, options) => {
     // A -p run or an SDK host has nobody to walk away: no clock, no pings, no compactions.
     if (!e.isInteractive) return r
     clock.isLive = true
-    await $.command.register({ name: 'cache-clock', description: 'Show the cache-clock policy and what it has done' })
+    await $.command.register({ name: 'cache-clock', argumentHint: '[on|pings|off]', immediate: true,
+      description: 'Show what cache-clock has done, or turn it on / pings-only / off for this session' })
     $.clock.every(1000, () => void paint($, clock))
     await paint($, clock)
     return r
   })
 
-  on('command.run', { command: 'cache-clock' }, async $ => {
+  on('command.run', { command: 'cache-clock' }, async ($, e) => {
+    const arg = e.args.trim().toLowerCase()
+    const pick: Mode | undefined = arg === 'off' ? 'off' : arg === 'pings' ? 'pings' : arg === 'on' || arg === 'auto' ? 'auto' : undefined
+    if (pick) {
+      await update($, mode, () => pick)
+      await paint($, clock)
+      return { text: `cache-clock ${MODE_TEXT[pick]} — this session only.` }
+    }
+    if (arg) return { text: `Unknown option "${arg}". Use /cache-clock on, /cache-clock pings or /cache-clock off.` }
     const entries = ((await $.store.get(LEDGER)) as LedgerEntry[] | undefined) ?? []
-    return { text: summarize(entries, { ...clock, leadMinutes, ttl }) }
+    return { text: summarize(entries, { ...clock, leadMinutes, ttl }, modeOf(clock, await read($, mode))) }
   })
 
   // A resumed transcript says how long it has been since its last response.

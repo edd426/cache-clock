@@ -121,6 +121,41 @@ def usage(input: Optional[int] = None, output: Optional[int] = None, cache_read:
             "cache_write_5m": cache_write_5m, "cache_write_1h": cache_write_1h, "ctx": ctx}
 
 
+# Spend ledger: every response's tokens, by tool, class and UTC day, so the report can say what share of all
+# spend a saving is. Built before collect.py drops subagent and scripted-run events from events.jsonl.
+SPEND_FIELDS = ("input", "output", "cache_read", "cache_write_5m", "cache_write_1h", "cache_write_other")
+SPEND_CLASSES = ("main", "subagent", "headless")
+
+
+def spend_class(e: Dict[str, Any]) -> str:
+    """headless wins (a scripted run's subagents are scripted too); unknown interactivity counts as interactive."""
+    if e.get("interactive") is False:
+        return "headless"
+    return "subagent" if e.get("subagent") else "main"
+
+
+def spend_add(ledger: Dict[Any, Dict[str, int]], e: Dict[str, Any]) -> None:
+    if e.get("kind") != "response":
+        return
+    day = datetime.fromtimestamp(e["t"], tz=timezone.utc).strftime("%Y-%m-%d")
+    a = ledger.setdefault((e["tool"], spend_class(e), day), dict.fromkeys(("responses", "with_usage") + SPEND_FIELDS, 0))
+    a["responses"] += 1
+    u = e.get("usage") or {}
+    if not any(u.get(f) for f in ("input", "output", "cache_read", "cache_write")):
+        return                     # no token counts in this store (or all zero): counted, not priced
+    a["with_usage"] += 1
+    w5, w1 = u.get("cache_write_5m") or 0, u.get("cache_write_1h") or 0
+    for f in ("input", "output", "cache_read"):
+        a[f] += u.get(f) or 0
+    a["cache_write_5m"] += w5
+    a["cache_write_1h"] += w1
+    a["cache_write_other"] += max(0, (u.get("cache_write") or 0) - w5 - w1)
+
+
+def spend_rows(ledger: Dict[Any, Dict[str, int]]) -> List[Dict[str, Any]]:
+    return [{"tool": t, "class": c, "day": d, **v} for (t, c, d), v in sorted(ledger.items())]
+
+
 def iter_jsonl(path: Path, cov: Optional[Coverage] = None) -> Iterator[Dict[str, Any]]:
     """Yield JSON objects from a JSONL file, counting (not raising on) bad lines."""
     try:

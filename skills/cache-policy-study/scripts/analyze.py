@@ -4,7 +4,7 @@
     python3 analyze.py --run DIR [--pricing FILE] [--ttl auto|5m|1h] [--lead MIN] [--settings FILE]
                        [--seed N] [--resamples N]
 
-Reads DIR/events.jsonl (+ coverage.json, optional sleep.json) and writes DIR/results.json.
+Reads DIR/events.jsonl (+ coverage.json, spend.json, optional sleep.json) and writes DIR/results.json.
 Two views: Claude Code behaviour alone, and return times pooled over every AI tool found.
 Costs are input-token equivalents (base input price = 1). The method is in references/method.md.
 """
@@ -26,6 +26,8 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_PRICING = HERE.parent / "references" / "pricing.json"
+sys.path.insert(0, str(HERE))
+from cps_common import SPEND_FIELDS, spend_add, spend_rows  # noqa: E402
 INF = float("inf")
 CC = "claude-code"
 TOOL_NAMES = {"claude-code": "Claude Code", "codex": "Codex", "gemini-cli": "Gemini CLI", "antigravity": "Antigravity",
@@ -934,6 +936,88 @@ def cache_economics(events: List[dict]) -> List[Dict[str, Any]]:
 
 # ----------------------------------------------------------------------------- recommendation
 
+def day_of(t: float) -> str:
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(t, tz=timezone.utc).strftime("%Y-%m-%d")
+
+
+def load_spend(run: Path, events: List[dict]) -> Tuple[List[dict], bool]:
+    """spend.json from collect.py; without it, only what events.jsonl kept (no subagents, no scripted runs)."""
+    p = run / "spend.json"
+    if p.exists():
+        return json.loads(p.read_text()).get("rows", []), True
+    led: Dict[Any, Dict[str, int]] = {}
+    for e in events:
+        spend_add(led, e)
+    return spend_rows(led), False
+
+
+def weigh(row: Dict[str, Any], p: Dict[str, Any], ttl: str) -> float:
+    """Input-token equivalents. A cache write the store did not split by TTL is priced at the analysed TTL."""
+    other = p["cache_write_1h"] if ttl == "1h" else p["cache_write_5m"]
+    return (row["input"] * p.get("input", 1.0) + row["output"] * p["output"] + row["cache_read"] * p["cache_read"]
+            + row["cache_write_5m"] * p["cache_write_5m"] + row["cache_write_1h"] * p["cache_write_1h"]
+            + row["cache_write_other"] * other)
+
+
+def spend_ladder(rows: List[dict], complete: bool, window: Tuple[str, str], pricing: Dict[str, Any],
+                 per_tool: Dict[str, Dict[str, float]], ttl: str, base: float, rec: Dict[str, Any]) -> Dict[str, Any]:
+    """The saving as a share of ever-wider denominators. share(D) = share(gap cost) × gap cost / D, so each step
+    shrinks the headline by the ratio of the two denominators; the steps say what each one adds."""
+    agg: Dict[Tuple[str, str], Dict[str, float]] = collections.defaultdict(lambda: collections.defaultdict(float))
+    for r in rows:
+        if not window[0] <= r["day"] <= window[1]:
+            continue
+        a = agg[(r["tool"], r["class"])]
+        a["cost"] += weigh(r, {**pricing, **per_tool.get(r["tool"], {})}, ttl)
+        a["tokens"] += sum(r[f] for f in SPEND_FIELDS)
+        a["responses"] += r["responses"]
+        a["with_usage"] += r["with_usage"]
+
+    def total(pred) -> float:
+        return sum(a["cost"] for (t, c), a in agg.items() if pred(t, c))
+
+    sv = rec.get("saving") or 0.0
+    saved = base * sv
+    lo, hi = (rec.get("interval") or [None, None])[:2]
+    others = sorted({t for t, _ in agg} - {CC})
+    priced_others = [t for t in others if any(agg[(t, c)]["with_usage"] for c in ("main", "subagent", "headless"))]
+    spec = [("idle-gap cost", "what the returns after your idle stretches cost with no mod (modelled: the do-nothing "
+             "row above)", None, True),
+            ("Claude Code, interactive, main thread", "every main-conversation request in the window",
+             lambda t, c: t == CC and c == "main", True),
+            ("+ subagents", "the subagents those conversations started (own cache prefixes; the mod cannot help them)",
+             lambda t, c: t == CC and c in ("main", "subagent"), complete),
+            ("+ scripted runs (claude -p, SDK)", "headless runs and their subagents (the mod is inert there)",
+             lambda t, c: t == CC, complete),
+            ("+ other AI tools", ("tools with token counts: " + (", ".join(tool_name(t) for t in priced_others) or "none"))
+             + ("; weighted with Claude's price ratios unless pricing.json per_tool says otherwise" if priced_others else ""),
+             lambda t, c: True, complete and bool(priced_others))]
+    steps, prev = [], None
+    for label, what, pred, ok in spec:
+        if not ok:
+            steps.append({"step": label, "what": what, "collected": False})
+            continue
+        den = base if pred is None else total(pred)
+        steps.append({"step": label, "what": what, "collected": True, "denominator": den,
+                      "gap_share": (base / den) if den else None, "saving_share": (saved / den) if den else None,
+                      "interval": [None if x is None or not den else x * base / den for x in (lo, hi)],
+                      "factor": (prev / den) if prev and den else None})
+        prev = den
+    per = []
+    for t in [CC] + others:
+        cls = {c: agg[(t, c)] for c in ("main", "subagent", "headless") if (t, c) in agg}
+        if not cls:
+            continue
+        resp = sum(a["responses"] for a in cls.values())
+        withu = sum(a["with_usage"] for a in cls.values())
+        per.append({"tool": t, "cost": {c: a["cost"] for c, a in cls.items()},
+                    "total": sum(a["cost"] for a in cls.values()), "tokens": sum(a["tokens"] for a in cls.values()),
+                    "responses": int(resp), "responses_without_counts": int(resp - withu)})
+    return {"saved": saved, "saving_on_gap": sv, "window": list(window), "complete": complete, "steps": steps,
+            "per_tool": per, "uncounted_tools": [t for t in others if t not in priced_others]}
+
+
 def confidence(n: int, lo, hi, gap, near) -> str:
     width = None if lo is None or hi is None else 100 * (hi - lo)
     if n < 50 or width is None or width > 25 or (gap is not None and gap > 10):
@@ -1024,6 +1108,7 @@ def analyze(run: Path, pricing_path: Path = DEFAULT_PRICING, ttl_opt: str = "aut
     t_start = time.time()
     rnd = random.Random(seed)
     pricing = {kk: v for kk, v in json.loads(Path(pricing_path).read_text()).items() if not kk.startswith("_")}
+    tool_prices = pricing.pop("per_tool", None) or {}
     current, cur_src = read_current(settings_path)
     lead_src = "--lead" if lead is not None else ("your settings" if cur_src == "your settings" else "mod default")
     lead = float(lead if lead is not None else current["lead"])
@@ -1147,6 +1232,15 @@ def analyze(run: Path, pricing_path: Path = DEFAULT_PRICING, ttl_opt: str = "aut
     else:
         rec_g = None
 
+    # ---- out of what: the saving as a share of total spend, over the window of the Claude Code timeline
+    cc_t = [e["t"] for e in events if e["tool"] == CC and e["kind"] == "response" and e.get("interactive") is not False
+            and not e.get("subagent")]
+    spend_rows_, spend_complete = load_spend(run, events)
+    spend = spend_ladder(spend_rows_, spend_complete, (day_of(min(cc_t)), day_of(max(cc_t))) if cc_t else ("", ""),
+                         pricing, tool_prices, ttl, base, rec_cc) if cc_t and base else None
+    if spend and not spend_complete:
+        warnings.append("no spend.json (collect.py writes it): the share of spend covers only the main thread")
+
     # ---- coverage
     tools_cov = []
     for t in coverage.get("tools", []):
@@ -1180,7 +1274,7 @@ def analyze(run: Path, pricing_path: Path = DEFAULT_PRICING, ttl_opt: str = "aut
             "current_rule": rule_name(sp.rules[sp.current], sp.lead), "current_saving": saving(tot[sp.current], base),
         },
         "model": dict(m),
-        "sleep": sleep_out, "presence": presence, "global": glob, "cache_economics": cache_economics(events),
+        "spend": spend, "sleep": sleep_out, "presence": presence, "global": glob, "cache_economics": cache_economics(events),
         "coverage": {"generated": coverage.get("generated"), "system": coverage.get("system"), "tools": tools_cov,
                      "power": coverage.get("power")},
         "recommendation": {"claude_code": rec_cc, **({"global": rec_g} if rec_g else {})},
@@ -1228,10 +1322,28 @@ def fmt_pct(x) -> str:
     return "n/a" if x is None else f"{100 * x:.0f}%"
 
 
+def fmt_share(x) -> str:
+    """Small shares keep a decimal: 2.5%, not 3%."""
+    return "n/a" if x is None else (f"{100 * x:.1f}%" if abs(x) < 0.1 else f"{100 * x:.0f}%")
+
+
 def short_rule(rule: str) -> str:
     import re
     rule = re.sub(r" · act [0-9.]+ min early$", "", rule)
     return rule.replace("1 ping then compact", "ping→compact").replace(": ", " ")
+
+
+def spend_tail(r: Dict[str, Any]) -> str:
+    """' = x% of <widest collected denominator>' — the headline never goes out without the total-spend share."""
+    sp = r.get("spend") or {}
+    done = [s for s in sp.get("steps", [])[1:] if s.get("collected") and s.get("saving_share") is not None]
+    if not done:
+        return ""
+    s = done[-1]
+    what = {"Claude Code, interactive, main thread": "your interactive Claude Code main-thread spend",
+            "+ subagents": "your interactive Claude Code spend", "+ scripted runs (claude -p, SDK)": "all Claude Code spend",
+            "+ other AI tools": "all AI-tool spend counted"}[s["step"]]
+    return f" = {fmt_share(s['saving_share'])} of {what}"
 
 
 def summary_lines(r: Dict[str, Any]) -> List[str]:
@@ -1241,12 +1353,13 @@ def summary_lines(r: Dict[str, Any]) -> List[str]:
     ivs = f" (90% {fmt_pct(iv[0])}–{fmt_pct(iv[1])})" if iv[0] is not None else ""
     alt = c.get("alternative")
     if c["verdict"] == "change":
-        lines = [f"Change your rule: saves {fmt_pct(c['saving'])}{ivs} vs {fmt_pct(c['current_saving'])} now · "
+        lines = [f"Change your rule: saves {fmt_pct(c['saving'])}{ivs} of idle-gap cost vs {fmt_pct(c['current_saving'])} "
+                 f"now{spend_tail(r)} · "
                  f"n={c['n']} · sampling confidence {c['confidence']}",
                  f"New rule: {short_rule(c['rule'])}"]
     elif c["verdict"] == "keep":
-        lines = [f"Keep your current rule ({c['current_source']}): saves {fmt_pct(c['saving'])}{ivs} · "
-                 f"n={c['n']} · sampling confidence {c['confidence']}"]
+        lines = [f"Keep your current rule ({c['current_source']}): saves {fmt_pct(c['saving'])}{ivs} of idle-gap cost"
+                 f"{spend_tail(r)} · n={c['n']} · sampling confidence {c['confidence']}"]
         if alt:
             lines.append(alt_line(alt))
         else:

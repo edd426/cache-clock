@@ -34,6 +34,14 @@ prompt or response text, and never emits a raw filesystem path or project name (
 `usage.ctx` is the size of the prompt the **next** request re-sends: `input + cache_read + cache_write + output`
 when all are known (Claude Code); the adapter leaves it null rather than guess.
 
+**spend.json** (written by collect.py, not by adapters): every `response` any adapter yielded — subagent and
+scripted-run ones included — summed per `tool` × `class` (`main` = interactive or unknown main thread,
+`subagent`, `headless` = scripted runs and their subagents) × UTC `day`: `responses`, `with_usage`, and token
+sums `input`, `output`, `cache_read`, `cache_write_5m`, `cache_write_1h`, `cache_write_other` (writes the store
+did not split by TTL). `events.jsonl` then drops subagent events (they feed no behaviour) and, unless
+`--include-headless`, scripted-run events. The Claude Code adapter reads `<session>/subagents/*.jsonl` for
+responses only, for this ledger.
+
 Coverage: each adapter also fills a `Coverage` record (see `cps_common.Coverage`): roots it checked (as
 placeholders like `{HOME}/.codex/sessions`), files read, files skipped with a reason, parse errors, and notes.
 `collect.py` adds sessions, events, first/last date and a per-month session histogram per tool — the month

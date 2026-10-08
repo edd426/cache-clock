@@ -66,7 +66,16 @@ tool. No prompt text, paths or project names reach the analysis.
    (assumed independent) and taken as between turns. It is labelled with its data mix (e.g. "global (92% Claude
    Code, 8% Codex)"): a fallback for thin Claude Code history, not independent evidence. Keeping only
    prompt-ended returns but every never-returned session inflates "never" — a selection effect toward fewer pings.
-9. **Confidence.** high: n ≥ 200, interval ≤ 12 points, holdout gap ≤ 3 points, near-optimal in ≥ 70% of
+9. **Out of what.** The saving (do-nothing cost − the recommended rule's cost, in input-token equivalents) is
+   divided by ever-wider totals over the Claude Code timeline's window (first to last interactive main-thread
+   response, by UTC day): the idle-gap cost itself (the headline), the interactive main thread, + its
+   subagents, + scripted runs (`claude -p`, SDK, and their subagents), + every other AI tool with token counts.
+   Each share = headline × gap cost ÷ that total, so each step shrinks the share by the ratio of the two totals;
+   the 90% interval is the headline's, scaled the same way. Totals come from `spend.json` (every response
+   collect.py read, before it dropped subagent and scripted-run events from `events.jsonl`); without it only
+   the main thread is counted. Other vendors' tokens are weighted with the same price ratios unless
+   `pricing.json` → `per_tool` overrides them; stores without token counts are named and left out.
+10. **Confidence.** high: n ≥ 200, interval ≤ 12 points, holdout gap ≤ 3 points, near-optimal in ≥ 70% of
    resamples. low: n < 50, interval > 25 points, or holdout gap > 10. Otherwise medium; the global view is
    capped at medium.
 
@@ -84,6 +93,7 @@ tool. No prompt text, paths or project names reach the analysis.
 | never came back | CLI still open, so the mod acts | cost nothing |
 | mid-turn | inferred from turn ends and prompts; compaction refused → pings. A transcript check that pairs each walk-away tool_use with its tool_result agreed on 471 of 476 stretches and moved the current rule from 71.3% to 70.8% (skeptic re-check, before manual-/compact pricing) | mid-turn ignored |
 | manual /compact return | priced as your own compaction | priced as an ordinary request |
+| other tools' price ratios | Claude's (read 0.1×, output 5×) unless `per_tool` in pricing.json | — (stated next to the share) |
 | independence (global view) | return time does not depend on context size | compare with the Claude Code view |
 | **not priced** | follow-up requests after a compaction re-read ~60k instead of C (favours compaction, so the study is conservative toward pings); compaction loses conversation detail (favours pings) | — |
 

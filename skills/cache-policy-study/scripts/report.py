@@ -21,7 +21,37 @@ def pc(x: Optional[float], digits: int = 0) -> str:
 
 
 def kt(x: Optional[float]) -> str:
-    return "n/a" if x is None else (f"{x / 1e6:.1f}M" if x >= 1e6 else f"{x / 1e3:.0f}k")
+    if x is None:
+        return "n/a"
+    return f"{x / 1e9:.2f}B" if x >= 1e9 else (f"{x / 1e6:.1f}M" if x >= 1e6 else f"{x / 1e3:.0f}k")
+
+
+def share(x: Optional[float]) -> str:
+    """Small shares keep a decimal: 2.5%, not 3%."""
+    return pc(x, 1 if x is not None and abs(x) < 0.1 else 0)
+
+
+CLASS_NAMES = (("main", "main thread"), ("subagent", "subagents"), ("headless", "scripted runs"))
+
+
+def spend_rows_view(sp: Dict[str, Any]) -> List[Tuple[Any, ...]]:
+    rows = []
+    for st in sp["steps"]:
+        if not st["collected"]:
+            rows.append((st["step"], st["what"], "not collected", "", "", ""))
+            continue
+        lo, hi = st["interval"]
+        iv = f" ({share(lo)}–{share(hi)})" if lo is not None else ""
+        rows.append((st["step"], st["what"], kt(st["denominator"]), share(st["gap_share"]),
+                     share(st["saving_share"]) + iv, "" if st["factor"] is None else f"× {st['factor']:.2f}"))
+    return rows
+
+
+def spend_lead(sp: Dict[str, Any]) -> str:
+    return (f"The mod saved {kt(sp['saved'])} input-token equivalents ({sp['window'][0]} – {sp['window'][1]}): "
+            f"{share(sp['saving_on_gap'])} of the idle-gap cost. The same saving divided by wider totals gives the "
+            "smaller shares below. Each share is the row above × the ratio of the two totals (last column), i.e. "
+            f"{share(sp['saving_on_gap'])} × gap cost ÷ that total.")
 
 
 def esc(s: Any) -> str:
@@ -215,6 +245,28 @@ def build_html(r: Dict[str, Any]) -> str:
              (rec_card(f"Fallback: {gr['label']}", gr, big=gr["saving_on_claude_code_history"],
                        sub=f"this rule on your Claude Code history · sampling confidence <b>{esc(gr['confidence'])}</b>", extra=g_extra)
               if gr else rec_card("Fallback: global", None)) + "</div>" + range_html(recs.get("claude_code")))
+
+    # out of what
+    sp = r.get("spend")
+    if sp:
+        done = [st for st in sp["steps"] if st["collected"]]
+        P.append("<h2>Out of what: the saving as a share of your spend</h2><p class=ink2>" + esc(spend_lead(sp)) + "</p>")
+        P.append(hbars([(st["step"], st["saving_share"], "best" if i == 0 else "ref") for i, st in enumerate(done)],
+                       fmt=share, vmin=0.0, vmax=1.0))
+        P.append(table(["denominator", "what it adds", "total (input-token eq.)", "gap cost is this much of it",
+                        "saving as a share of it (90%)", "from the row above"], spend_rows_view(sp), num_from=2))
+        per = [(t["tool"],) + tuple(kt(t["cost"].get(c)) if c in t["cost"] else "—" for c, _ in CLASS_NAMES)
+               + (kt(t["total"]), kt(t["tokens"]), t["responses_without_counts"]) for t in sp["per_tool"]]
+        P.append("<h3>Spend per tool in the window</h3>" + table(
+            ["tool"] + [n for _, n in CLASS_NAMES] + ["total", "tokens, unweighted", "responses without token counts"], per))
+        notes = ["Totals are in input-token equivalents (cache read 0.1×, writes 1.25×/2×, output 5×), the unit the "
+                 "saving is in. Unweighted tokens are mostly cache reads, which is why they dwarf the weighted totals."]
+        if sp["uncounted_tools"]:
+            notes.append("Not in any total (their stores keep no token counts): "
+                         + ", ".join(sp["uncounted_tools"]) + ". Their spend is real, so the last share is an upper bound.")
+        if not sp["complete"]:
+            notes.append("No spend.json: subagents and scripted runs were not collected (run collect.py).")
+        P.append("<p class=muted>" + esc(" ".join(notes)) + "</p>")
 
     # policy chart
     items = [(p["policy"].split(": ", 1)[0] if p["kind"] in ("current", "best") else p["policy"], p["saving"],
@@ -442,6 +494,18 @@ def build_md(r: Dict[str, Any]) -> str:
         if key == "global":
             L += [f"On your Claude Code history: {pc(rec['saving_on_claude_code_history'])}.", ""]
         L += [rec["when"], ""]
+    sp = r.get("spend")
+    if sp:
+        L += ["## Out of what: the saving as a share of your spend", "", spend_lead(sp), "",
+              "| denominator | total | gap cost is | saving share (90%) | from row above |", "|---|---:|---:|---:|---:|"]
+        L += [f"| {a} | {c} | {d} | {e} | {f} |" for a, _, c, d, e, f in spend_rows_view(sp)]
+        L += ["", "| tool | main thread | subagents | scripted runs | total | responses without token counts |",
+              "|---|---:|---:|---:|---:|---:|"]
+        L += [f"| {t['tool']} | " + " | ".join(kt(t["cost"].get(c)) if c in t["cost"] else "—" for c, _ in CLASS_NAMES)
+              + f" | {kt(t['total'])} | {t['responses_without_counts']} |" for t in sp["per_tool"]]
+        if sp["uncounted_tools"]:
+            L += ["", "No token counts (not in any total): " + ", ".join(sp["uncounted_tools"]) + "."]
+        L.append("")
     L += ["## Policies", "", "| policy | saving |", "|---|---:|"]
     L += [f"| {p['policy']} | {pc(p['saving'], 1)} |" for p in r["claude_code"]["policies"]]
     L += ["", "## TTL validation", "", "| gap | returns | misses |", "|---|---:|---:|"]
@@ -457,6 +521,17 @@ def build_md(r: Dict[str, Any]) -> str:
         L += ["", "## Warnings", ""] + [f"- {w}" for w in r["warnings"]]
     L += ["", "Not priced: compaction's loss of detail, and the cheaper follow-up requests after a compaction."]
     return "\n".join(L) + "\n"
+
+
+def photo_spend(sp: Optional[Dict[str, Any]]) -> str:
+    if not sp:
+        return ""
+    short = {"idle-gap cost": "gap", "Claude Code, interactive, main thread": "cc main", "+ subagents": "+subagents",
+             "+ scripted runs (claude -p, SDK)": "+scripted", "+ other AI tools": "+other tools"}
+    lines = [f"{short.get(st['step'], st['step'])} {kt(st['denominator'])} → {share(st['saving_share'])}"
+             if st["collected"] else f"{short.get(st['step'], st['step'])} not collected" for st in sp["steps"]]
+    unc = f"<p><small>no token counts: {esc(' '.join(sp['uncounted_tools']))}</small></p>" if sp["uncounted_tools"] else ""
+    return (f"<h2>SAVED {kt(sp['saved'])} AS A SHARE OF</h2><p>" + "<br>".join(esc(x) for x in lines) + "</p>" + unc)
 
 
 def build_photo(r: Dict[str, Any]) -> str:
@@ -498,6 +573,7 @@ def build_photo(r: Dict[str, Any]) -> str:
             + (block("FALLBACK " + gr["label"].upper(), gr,
                      f"<p>on Claude Code history: {pc(gr.get('saving_on_claude_code_history'))} (not independent)</p>")
                if gr else "")
+            + photo_spend(r.get("spend"))
             + f"<h2>COVERAGE</h2><p>{esc(cov)}</p>"
             + f"<p>stretches={c['stretches']} midturn={c['midturn_at_first_action']} never={pc(c['return_table']['never_share'])} "
               f"ctx_med={kt(c['ctx_at_walkaway']['median'])} W={kt(r['model']['W'])}</p>"

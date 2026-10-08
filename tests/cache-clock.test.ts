@@ -48,7 +48,7 @@ async function turn($: Engine) {
   return r
 }
 // origin and presentation are stamped by the engine in a session
-const runCommand = ($: Engine) => $.command.run({ command: 'cache-clock', args: '' } as Parameters<Engine['command']['run']>[0])
+const runCommand = ($: Engine, args = '') => $.command.run({ command: 'cache-clock', args } as Parameters<Engine['command']['run']>[0])
 const start = ($: Engine) => $.session.start({ cwd: '/x', surface: 'terminal', isInteractive: true })
 
 test('decide: the three bands', () => {
@@ -143,6 +143,41 @@ test('autoAct off only warns', { options: { autoAct: false } }, async ($, on) =>
   await h.clock.advance(58 * MIN)
   expect(h.actions).toEqual([])
   expect(h.toasts).toEqual([expect.stringContaining('Prompt cache lapses in')])
+})
+
+test('/cache-clock off: no pings or compactions, a warning, and on resumes', { timeoutMs: 20_000 }, async ($, on) => {
+  const h = harness(on, 450_000)
+  await start($)
+  await turn($)
+  expect((await runCommand($, 'off')).text).toContain('off: no pings, no compactions')
+  expect(h.statuses.at(-1)).toBe('cache ◷ 1h00m left · off')
+  await h.clock.advance(58 * MIN)
+  expect(h.actions).toEqual([])
+  expect(h.toasts).toEqual([expect.stringContaining('Prompt cache lapses in')])
+  expect((await runCommand($)).text).toContain('This session: off')
+  await runCommand($, 'on')
+  await turn($)
+  await h.clock.advance(58 * MIN)
+  expect(h.actions).toEqual(['compact'])
+})
+
+test('/cache-clock pings: keeps a large context warm, never compacts', { timeoutMs: 20_000 }, async ($, on) => {
+  const h = harness(on, 450_000)
+  await start($)
+  await turn($)
+  await runCommand($, 'pings')
+  for (let i = 0; i < 8; i++) await h.clock.advance(30 * MIN)
+  expect(h.actions).toEqual(['ping', 'ping', 'ping'])
+  expect(h.statuses.at(-1)).toBe('cache ✕ expired · next prompt re-writes ~450k · pings only')
+})
+
+test('/cache-clock with an unknown option changes nothing', async ($, on) => {
+  const h = harness(on, 450_000)
+  await start($)
+  await turn($)
+  expect((await runCommand($, 'of')).text).toContain('Unknown option "of"')
+  await h.clock.advance(58 * MIN)
+  expect(h.actions).toEqual(['compact'])
 })
 
 test('subagent requests do not reset the clock', { options: { ttl: '5m' } }, async ($, on) => {

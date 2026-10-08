@@ -6,5 +6,6 @@
  "output": 5.0,
  "input": 1.0,
  "ping_output_tokens": 60,
- "_ping_note": "Output tokens a keep-alive ping costs (the mod asks for a one-word reply; 60 covers a short answer plus overhead). Sensitivity runs 200."
+ "_ping_note": "Output tokens a keep-alive ping costs (the mod asks for a one-word reply; 60 covers a short answer plus overhead). Sensitivity runs 200.",
+ "_per_tool_note": "Optional per_tool: {\"codex\": {\"output\": 8.0}, ...} overrides these ratios for one tool when the share-of-spend table weighs other vendors' tokens. Without it every tool is weighted with the ratios above. Only that table uses it; the policy search is Claude Code's alone."
 }

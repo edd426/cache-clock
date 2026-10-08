@@ -74,6 +74,33 @@ class ClaudeCodeAdapter(unittest.TestCase):
         ])
         self.assertEqual([e["kind"] for e in evs], ["auto_prompt", "prompt"])
 
+    def test_subagents_feed_spend_not_behaviour(self):
+        import collect
+        with tempfile.TemporaryDirectory() as home:
+            p = Path(home) / ".claude" / "projects" / "-placeholder"
+            (p / "s1" / "subagents").mkdir(parents=True)
+            with open(p / "s1.jsonl", "w") as f:
+                for r in (user("2026-10-01T10:00:00Z", "q"), assistant("2026-10-01T10:00:05Z", "m1")):
+                    f.write(json.dumps(r) + "\n")
+            with open(p / "s1" / "subagents" / "agent-a1.jsonl", "w") as f:
+                for r in (user("2026-10-01T10:00:06Z", "sub task", isSidechain=True, agentId="a1"),
+                          assistant("2026-10-01T10:00:08Z", "m2", read=40, write=10),
+                          assistant("2026-10-01T10:00:09Z", "m2", read=40, write=10)):   # second block, same response
+                    r.update(isSidechain=True, agentId="a1")
+                    f.write(json.dumps(r) + "\n")
+            out = Path(home) / "out"
+            env = Env.detect(home)
+            env.environ.pop("CLAUDE_CONFIG_DIR", None)
+            evs = list(claude_code.collect(env, None, None, Coverage("claude-code", True)))
+            self.assertEqual([(e["kind"], e["subagent"]) for e in evs], [("prompt", False), ("response", False), ("response", True)])
+            self.assertEqual(collect.main(["--out", str(out), "--home", home, "--only", "claude-code", "--no-power"]), 0)
+            kept = [json.loads(x) for x in (out / "events.jsonl").read_text().splitlines()]
+            self.assertFalse(any(e["subagent"] for e in kept))
+            rows = json.loads((out / "spend.json").read_text())["rows"]
+            by = {r["class"]: r for r in rows}
+            self.assertEqual(by["main"]["cache_read"], 1000)
+            self.assertEqual((by["subagent"]["responses"], by["subagent"]["cache_read"], by["subagent"]["cache_write_1h"]), (1, 40, 10))
+
     def test_headless(self):
         evs = self.collect([user("2026-10-01T10:00:00Z", "q"), assistant("2026-10-01T10:00:05Z", "m1")], "sdk-cli")
         self.assertTrue(all(e["interactive"] is False for e in evs))
