@@ -1,5 +1,27 @@
 # cache-clock
 
+> **Retired, November 2026: Claude Code now does this itself.** Since v2.1.299 (October 2026), Claude Code's
+> built-in **idle compaction** compacts a conversation of 200k tokens or more about 54 minutes into an idle
+> stretch, before its one-hour prompt cache expires, so your next message doesn't re-write the whole
+> conversation. It is on by default. `"idleCompaction": false` in `settings.json` turns it off, and
+> `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS` moves the threshold (100k at the lowest): see the
+> [settings reference](https://code.claude.com/docs/en/settings-reference#idlecompaction) and the
+> [environment variables](https://code.claude.com/docs/en/env-vars).
+>
+> Running both adds little: Claude Code compacts at about 54 minutes and cache-clock acts at 57, so the mod
+> only adds its countdown and keep-alive pings for smaller conversations. To remove it:
+>
+> ```
+> claude plugin uninstall cache-clock@cache-clock
+> claude plugin marketplace remove cache-clock
+> ```
+>
+> Known issue, not fixed: when cache-clock compacted a 125k–300k conversation at the deadline after a
+> keep-alive ping, that compaction missed the prompt cache (4 of 4 times in the author's log) and cost about
+> as much as fresh input. Compactions with no ping before them read the cache as designed.
+>
+> The rest of this README describes the mod as it was.
+
 A Claude Code mod that shows how long your prompt cache has left, and acts just before it expires so that
 coming back after a break doesn't re-write your whole conversation at full price.
 
